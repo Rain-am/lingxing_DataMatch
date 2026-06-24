@@ -1,43 +1,75 @@
 <template>
   <main class="app-shell">
-    <aside class="sidebar">
+    <header class="topbar">
       <div>
-        <h1>领星数仓表对数</h1>
-        <p>按日期和店铺核对数仓与 ERP 汇总指标。</p>
+        <h1>领星数仓对数</h1>
+        <p>按周期汇总数仓与 ERP 指标，支持店铺下钻核对。</p>
       </div>
-      <nav>
+      <nav class="topnav">
         <button :class="{ active: tab === 'rules' }" @click="tab = 'rules'">规则管理</button>
         <button :class="{ active: tab === 'run' }" @click="tab = 'run'">运行对账</button>
         <button :class="{ active: tab === 'result' }" @click="tab = 'result'" :disabled="!currentRun">结果查看</button>
       </nav>
-    </aside>
+    </header>
 
     <section class="workspace">
       <div v-if="message" class="message" :class="messageType">{{ message }}</div>
 
-      <section v-if="tab === 'rules'" class="panel">
-        <div class="panel-header">
-          <h2>规则管理</h2>
-          <button class="secondary" @click="resetRuleForm">新建规则</button>
-        </div>
+      <section v-if="tab === 'rules'" class="panel rules-panel">
+        <aside class="rules-index">
+          <div class="section-head">
+            <div>
+              <h2>规则</h2>
+              <span>{{ filteredRules.length }} / {{ rules.length }}</span>
+            </div>
+            <button class="secondary" @click="resetRuleForm">新建</button>
+          </div>
 
-        <div class="layout-two">
-          <form class="form-grid" @submit.prevent="saveRule">
+          <input v-model="ruleSearch" class="search-input" placeholder="搜索规则名" />
+
+          <div class="rule-list">
+            <button
+              v-for="rule in filteredRules"
+              :key="rule.id"
+              class="rule-name-item"
+              :class="{ selected: editingRuleId === rule.id }"
+              @click="editRule(rule)"
+            >
+              {{ rule.name }}
+            </button>
+            <div v-if="filteredRules.length === 0" class="empty">暂无规则</div>
+          </div>
+        </aside>
+
+        <form class="rule-editor" @submit.prevent="saveRule">
+          <div class="section-head">
+            <div>
+              <h2>{{ editingRuleId ? '编辑规则' : '新建规则' }}</h2>
+              <span>{{ ruleForm.name || '未命名规则' }}</span>
+            </div>
+            <div class="toolbar">
+              <button v-if="editingRuleId" type="button" class="danger" @click="removeRule(editingRuleId)">删除</button>
+              <button type="button" class="secondary" @click="resetRuleForm">清空</button>
+              <button type="submit">{{ editingRuleId ? '保存修改' : '创建规则' }}</button>
+            </div>
+          </div>
+
+          <div class="form-grid compact">
             <label>
               规则名称
-              <input v-model="ruleForm.name" required placeholder="如：财务利润月度核对" />
+              <input v-model="ruleForm.name" required placeholder="如：利润报表月度对数" />
             </label>
             <label>
               数仓表名
-              <input v-model="ruleForm.warehouse_table" required placeholder="dw_profit_report" />
+              <input v-model="ruleForm.warehouse_table" required placeholder="bi_profit_statement_report_asin_usd" />
             </label>
             <label>
               数仓日期字段
-              <input v-model="ruleForm.warehouse_date_field" required placeholder="biz_date" />
+              <input v-model="ruleForm.warehouse_date_field" required placeholder="dataDate" />
             </label>
             <label>
               数仓店铺字段
-              <input v-model="ruleForm.warehouse_store_field" required placeholder="store_name" />
+              <input v-model="ruleForm.warehouse_store_field" required placeholder="storeName" />
             </label>
             <label>
               ERP API Path
@@ -49,58 +81,49 @@
             </label>
             <label>
               ERP 返回店铺字段
-              <input v-model="ruleForm.erp_store_field" required placeholder="sellerName" />
+              <input v-model="ruleForm.erp_store_field" required placeholder="storeName" />
             </label>
-
-            <label class="wide">
-              ERP 请求配置 JSON
-              <textarea v-model="erpRequestConfigText" rows="8" spellcheck="false"></textarea>
-            </label>
-
-            <div class="metrics-editor">
-              <div class="metrics-header">
-                <h3>指标</h3>
-                <button type="button" class="secondary" @click="addMetric">添加指标</button>
-              </div>
-              <div v-for="(metric, index) in ruleForm.metrics" :key="index" class="metric-row">
-                <input v-model="metric.name" required placeholder="指标名" />
-                <input v-model="metric.warehouse_expression" required placeholder="数仓表达式，如 profit_amount" />
-                <input v-model="metric.erp_field" required placeholder="ERP字段，如 profitAmount" />
-                <select v-model="metric.aggregation">
-                  <option value="sum">sum</option>
-                  <option value="count">count</option>
-                </select>
-                <input v-model.number="metric.tolerance" type="number" min="0" step="0.01" placeholder="容差" />
-                <button type="button" class="icon-button danger" @click="removeMetric(index)" :disabled="ruleForm.metrics.length === 1">删</button>
-              </div>
-            </div>
-
-            <div class="actions">
-              <button type="submit">{{ editingRuleId ? '保存修改' : '创建规则' }}</button>
-              <button type="button" class="secondary" @click="resetRuleForm">清空</button>
-            </div>
-          </form>
-
-          <div class="rule-list">
-            <h3>已保存规则</h3>
-            <div v-if="rules.length === 0" class="empty">暂无规则</div>
-            <article v-for="rule in rules" :key="rule.id" class="rule-card">
-              <div>
-                <strong>{{ rule.name }}</strong>
-                <span>{{ rule.warehouse_table }} -> {{ rule.erp_module_path }}</span>
-              </div>
-              <div class="card-actions">
-                <button class="secondary" @click="editRule(rule)">编辑</button>
-                <button class="danger" @click="removeRule(rule.id)">删除</button>
-              </div>
-            </article>
           </div>
-        </div>
+
+          <label class="wide">
+            ERP 请求配置 JSON
+            <textarea v-model="erpRequestConfigText" rows="8" spellcheck="false"></textarea>
+          </label>
+
+          <div class="metrics-editor">
+            <div class="section-head subtle">
+              <h3>指标</h3>
+              <button type="button" class="secondary" @click="addMetric">添加指标</button>
+            </div>
+            <div class="metric-head">
+              <span>指标名</span>
+              <span>数仓表达式</span>
+              <span>ERP 字段</span>
+              <span>聚合</span>
+              <span>容差</span>
+              <span></span>
+            </div>
+            <div v-for="(metric, index) in ruleForm.metrics" :key="index" class="metric-row">
+              <input v-model="metric.name" required placeholder="毛利润" />
+              <input v-model="metric.warehouse_expression" required placeholder="grossProfit" />
+              <input v-model="metric.erp_field" required placeholder="grossProfit" />
+              <select v-model="metric.aggregation">
+                <option value="sum">sum</option>
+                <option value="count">count</option>
+              </select>
+              <input v-model.number="metric.tolerance" type="number" min="0" step="0.01" />
+              <button type="button" class="icon-button danger" @click="removeMetric(index)" :disabled="ruleForm.metrics.length === 1">删</button>
+            </div>
+          </div>
+        </form>
       </section>
 
       <section v-if="tab === 'run'" class="panel">
-        <div class="panel-header">
-          <h2>运行对账</h2>
+        <div class="section-head">
+          <div>
+            <h2>运行对账</h2>
+            <span>选择规则和日期范围后开始核对</span>
+          </div>
         </div>
         <form class="run-form" @submit.prevent="run">
           <label>
@@ -129,22 +152,33 @@
         </form>
       </section>
 
-      <section v-if="tab === 'result'" class="panel">
-        <div class="panel-header">
-          <h2>结果查看</h2>
+      <section v-if="tab === 'result'" class="panel result-panel">
+        <div class="section-head">
+          <div>
+            <h2>结果查看</h2>
+            <span v-if="currentRun">{{ currentRun.rule_name }} · {{ currentRun.start_date }} 至 {{ currentRun.end_date }}</span>
+          </div>
           <a v-if="currentRun" class="button-link" :href="exportRunUrl(currentRun.id)">导出 Excel</a>
         </div>
 
-        <div v-if="currentRun" class="result-meta">
-          <span>规则：{{ currentRun.rule_name }}</span>
-          <span>日期：{{ currentRun.start_date }} 至 {{ currentRun.end_date }}</span>
-          <span>粒度：{{ currentRun.granularity === 'day' ? '按天' : '按月' }}</span>
-          <span>行数：{{ filteredRows.length }}</span>
+        <div v-if="currentRun" class="summary-strip">
+          <div>
+            <span>汇总行</span>
+            <strong>{{ filteredSummaryRows.length }}</strong>
+          </div>
+          <div>
+            <span>店铺明细</span>
+            <strong>{{ currentRun.rows.length }}</strong>
+          </div>
+          <div>
+            <span>状态</span>
+            <strong>{{ runStatusLabel }}</strong>
+          </div>
         </div>
 
         <div class="filters">
-          <input v-model="filters.store" placeholder="筛选店铺" />
-          <input v-model="filters.period" placeholder="筛选周期" />
+          <input v-model="filters.period" placeholder="筛选月份" />
+          <input v-model="filters.metric" placeholder="筛选指标" />
           <select v-model="filters.status">
             <option value="">全部状态</option>
             <option value="matched">一致</option>
@@ -157,26 +191,59 @@
           <table>
             <thead>
               <tr>
-                <th>周期</th>
-                <th>店铺</th>
+                <th>月份</th>
                 <th>指标</th>
-                <th>数仓值</th>
-                <th>ERP值</th>
-                <th>差异值</th>
-                <th>差异率</th>
+                <th class="number">数仓合计</th>
+                <th class="number">ERP 合计</th>
+                <th class="number">差异值</th>
+                <th class="number">差异率</th>
                 <th>状态</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in filteredRows" :key="`${row.period}-${row.store}-${row.metric}`" :class="row.status">
-                <td>{{ row.period }}</td>
-                <td>{{ row.store }}</td>
-                <td>{{ row.metric }}</td>
-                <td>{{ formatNumber(row.warehouse_value) }}</td>
-                <td>{{ formatNumber(row.erp_value) }}</td>
-                <td>{{ formatNumber(row.diff_value) }}</td>
-                <td>{{ formatRate(row.diff_rate) }}</td>
-                <td>{{ statusLabel(row.status) }}</td>
+              <template v-for="row in filteredSummaryRows" :key="row.key">
+                <tr class="summary-row" :class="row.status" @click="toggleExpand(row.key)">
+                  <td>{{ row.period }}</td>
+                  <td>{{ row.metric }}</td>
+                  <td class="number">{{ formatNumber(row.warehouse_value) }}</td>
+                  <td class="number">{{ formatNumber(row.erp_value) }}</td>
+                  <td class="number">{{ formatNumber(row.diff_value) }}</td>
+                  <td class="number">{{ formatRate(row.diff_rate) }}</td>
+                  <td>{{ statusLabel(row.status) }}</td>
+                  <td class="drill-action">{{ expandedKey === row.key ? '收起' : '店铺明细' }}</td>
+                </tr>
+                <tr v-if="expandedKey === row.key" class="detail-row">
+                  <td colspan="8">
+                    <div class="detail-table">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>店铺</th>
+                            <th class="number">数仓值</th>
+                            <th class="number">ERP 值</th>
+                            <th class="number">差异值</th>
+                            <th class="number">差异率</th>
+                            <th>状态</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="detail in row.details" :key="`${row.key}-${detail.store}`" :class="detail.status">
+                            <td>{{ detail.store || '-' }}</td>
+                            <td class="number">{{ formatNumber(detail.warehouse_value) }}</td>
+                            <td class="number">{{ formatNumber(detail.erp_value) }}</td>
+                            <td class="number">{{ formatNumber(detail.diff_value) }}</td>
+                            <td class="number">{{ formatRate(detail.diff_rate) }}</td>
+                            <td>{{ statusLabel(detail.status) }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+              <tr v-if="filteredSummaryRows.length === 0">
+                <td colspan="8" class="empty-table">暂无结果</td>
               </tr>
             </tbody>
           </table>
@@ -211,6 +278,8 @@ const message = ref('')
 const messageType = ref('info')
 const editingRuleId = ref(null)
 const erpRequestConfigText = ref(JSON.stringify(defaultRequestConfig(), null, 2))
+const ruleSearch = ref('')
+const expandedKey = ref('')
 
 const emptyMetric = () => ({
   name: '',
@@ -237,22 +306,72 @@ const runForm = reactive({
   rule_id: '',
   start_date: '',
   end_date: '',
-  granularity: 'day',
+  granularity: 'month',
 })
 const filters = reactive({
-  store: '',
   period: '',
+  metric: '',
   status: '',
 })
 
-const filteredRows = computed(() => {
+const filteredRules = computed(() => {
+  const keyword = ruleSearch.value.trim().toLowerCase()
+  if (!keyword) return rules.value
+  return rules.value.filter((rule) => rule.name.toLowerCase().includes(keyword))
+})
+
+const summaryRows = computed(() => {
   if (!currentRun.value) return []
-  return currentRun.value.rows.filter((row) => {
-    const storeOk = !filters.store || row.store.includes(filters.store)
+  const severity = { matched: 0, minor_diff: 1, major_diff: 2 }
+  const labelBySeverity = ['matched', 'minor_diff', 'major_diff']
+  const groups = new Map()
+
+  for (const row of currentRun.value.rows) {
+    const key = `${row.period}__${row.metric}`
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        period: row.period,
+        metric: row.metric,
+        warehouse_value: 0,
+        erp_value: 0,
+        diff_value: 0,
+        status_score: 0,
+        details: [],
+      })
+    }
+    const group = groups.get(key)
+    group.warehouse_value += Number(row.warehouse_value || 0)
+    group.erp_value += Number(row.erp_value || 0)
+    group.diff_value += Number(row.diff_value || 0)
+    group.status_score = Math.max(group.status_score, severity[row.status] ?? 0)
+    group.details.push(row)
+  }
+
+  return Array.from(groups.values())
+    .map((row) => ({
+      ...row,
+      diff_rate: row.erp_value === 0 ? null : row.diff_value / row.erp_value,
+      status: labelBySeverity[row.status_score] || 'matched',
+      details: [...row.details].sort((a, b) => String(a.store).localeCompare(String(b.store), 'zh-CN')),
+    }))
+    .sort((a, b) => a.period.localeCompare(b.period) || a.metric.localeCompare(b.metric, 'zh-CN'))
+})
+
+const filteredSummaryRows = computed(() => {
+  return summaryRows.value.filter((row) => {
     const periodOk = !filters.period || row.period.includes(filters.period)
+    const metricOk = !filters.metric || row.metric.includes(filters.metric)
     const statusOk = !filters.status || row.status === filters.status
-    return storeOk && periodOk && statusOk
+    return periodOk && metricOk && statusOk
   })
+})
+
+const runStatusLabel = computed(() => {
+  if (!currentRun.value) return '-'
+  if (summaryRows.value.some((row) => row.status === 'major_diff')) return '存在异常差异'
+  if (summaryRows.value.some((row) => row.status === 'minor_diff')) return '存在轻微差异'
+  return '一致'
 })
 
 function notify(text, type = 'info') {
@@ -260,7 +379,7 @@ function notify(text, type = 'info') {
   messageType.value = type
   window.setTimeout(() => {
     if (message.value === text) message.value = ''
-  }, 3500)
+  }, 4500)
 }
 
 async function refreshRules() {
@@ -315,6 +434,7 @@ async function removeRule(id) {
   try {
     await deleteRule(id)
     await refreshRules()
+    resetRuleForm()
     notify('规则已删除', 'success')
   } catch (error) {
     notify(error.message, 'error')
@@ -323,6 +443,7 @@ async function removeRule(id) {
 
 async function run() {
   running.value = true
+  expandedKey.value = ''
   try {
     currentRun.value = await runReconcile(runForm)
     tab.value = 'result'
@@ -332,6 +453,10 @@ async function run() {
   } finally {
     running.value = false
   }
+}
+
+function toggleExpand(key) {
+  expandedKey.value = expandedKey.value === key ? '' : key
 }
 
 function formatNumber(value) {
