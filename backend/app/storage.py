@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from app.config import get_settings
-from app.schemas import ReconcileRow, ReconcileRun, Rule, RuleCreate, RuleUpdate, Source
+from app.schemas import ReconcileRow, ReconcileRun, RunListItem, Rule, RuleCreate, RuleUpdate, Source
 
 
 def _model_json_dict(model):
@@ -321,3 +321,41 @@ def get_run(run_id: int) -> Optional[ReconcileRun]:
     data["rows"] = json.loads(data.pop("rows_json"))
     data["summary_rows"] = json.loads(data.pop("summary_rows_json", "[]") or "[]")
     return ReconcileRun.parse_obj(data)
+
+
+def list_runs(
+    *,
+    rule_id: Optional[int] = None,
+    status: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = 100,
+) -> list[RunListItem]:
+    clauses: list[str] = []
+    params: list[object] = []
+    if rule_id is not None:
+        clauses.append("rule_id = ?")
+        params.append(rule_id)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if start_date is not None:
+        clauses.append("end_date >= ?")
+        params.append(start_date.isoformat())
+    if end_date is not None:
+        clauses.append("start_date <= ?")
+        params.append(end_date.isoformat())
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, rule_id, rule_name, start_date, end_date, granularity, status, error_message, created_at
+            FROM reconcile_runs
+            {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    return [RunListItem.parse_obj(dict(row)) for row in rows]

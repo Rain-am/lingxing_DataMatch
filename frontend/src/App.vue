@@ -3,12 +3,12 @@
     <header class="topbar">
       <div>
         <h1>领星数仓对数</h1>
-        <p>按月份汇总多个数仓与 ERP 来源，支持店铺下钻核对。</p>
+        <p>规则独立运行，结果自由组合对比。</p>
       </div>
       <nav class="topnav">
         <button :class="{ active: tab === 'rules' }" @click="tab = 'rules'">规则管理</button>
         <button :class="{ active: tab === 'run' }" @click="tab = 'run'">运行对账</button>
-        <button :class="{ active: tab === 'result' }" @click="tab = 'result'" :disabled="!currentRun">结果查看</button>
+        <button :class="{ active: tab === 'result' }" @click="openResults">结果查看</button>
       </nav>
     </header>
 
@@ -33,7 +33,8 @@
               :class="{ selected: editingRuleId === rule.id }"
               @click="editRule(rule)"
             >
-              {{ rule.name }}
+              <strong>{{ rule.name }}</strong>
+              <span>{{ rule.updated_at ? formatDateTime(rule.updated_at) : '' }}</span>
             </button>
             <div v-if="filteredRules.length === 0" class="empty">暂无规则</div>
           </div>
@@ -52,121 +53,103 @@
             </div>
           </div>
 
-          <div class="form-grid compact">
-            <label>
-              规则名称
-              <input v-model="ruleForm.name" required placeholder="如：利润报表与订单利润对数" />
-            </label>
-            <label>
-              基准来源
-              <select v-model="ruleForm.comparison_base_source" required>
-                <option v-for="source in ruleForm.sources" :key="source.name" :value="source.name">{{ source.name }}</option>
-              </select>
-            </label>
-            <label>
-              ERP 币种
-              <input value="USD" disabled />
-            </label>
-          </div>
-
-          <div class="sources-editor">
-            <div class="section-head subtle">
-              <h3>数据来源</h3>
-              <div class="toolbar">
-                <button type="button" class="secondary" @click="addSource('warehouse')">添加数仓来源</button>
-                <button type="button" class="secondary" @click="addSource('erp')">添加 ERP 来源</button>
-              </div>
-            </div>
-
-            <section v-for="(source, sourceIndex) in ruleForm.sources" :key="sourceIndex" class="source-block">
-              <div class="section-head subtle">
-                <h3>{{ source.name || '未命名来源' }}</h3>
-                <button type="button" class="icon-button danger" :disabled="ruleForm.sources.length <= 2" @click="removeSource(sourceIndex)">删</button>
-              </div>
-
-              <div class="form-grid compact">
-                <label>
-                  来源名称
-                  <input v-model="source.name" required @change="syncBaseSource" />
-                </label>
-                <label>
-                  来源类型
-                  <select v-model="source.type">
-                    <option value="warehouse">数仓</option>
-                    <option value="erp">ERP</option>
-                  </select>
-                </label>
-                <label>
-                  {{ source.type === 'warehouse' ? '数仓表名' : 'ERP API Path' }}
-                  <input v-model="source.table_or_path" required />
-                </label>
-                <label>
-                  {{ source.type === 'warehouse' ? '数仓日期字段' : 'ERP 返回日期字段' }}
-                  <input v-model="source.date_field" :required="source.type === 'warehouse' || source.period_mode === 'response_field'" />
-                </label>
-                <label>
-                  {{ source.type === 'warehouse' ? '数仓店铺字段' : 'ERP 返回店铺字段' }}
-                  <input v-model="source.store_field" required />
-                </label>
-                <label v-if="source.type === 'erp'">
-                  周期来源
-                  <select v-model="source.period_mode">
-                    <option value="response_field">返回日期字段</option>
-                    <option value="request_month">请求月份</option>
-                  </select>
-                </label>
-              </div>
-
-              <label v-if="source.type === 'erp'" class="wide">
-                ERP 请求配置 JSON（币种固定为 USD）
-                <textarea v-model="source.request_config_text" rows="7" spellcheck="false"></textarea>
+          <section class="form-section">
+            <h3>基础信息</h3>
+            <div class="form-grid compact">
+              <label>
+                规则名称
+                <input v-model="ruleForm.name" required placeholder="如：利润报表月度对数" />
               </label>
+              <label>
+                ERP 币种
+                <input value="USD" disabled />
+              </label>
+            </div>
+          </section>
 
-              <div class="metrics-editor">
-                <div class="section-head subtle">
-                  <h3>指标</h3>
-                  <button type="button" class="secondary" @click="addMetric(source)">添加指标</button>
-                </div>
-                <div class="metric-head">
-                  <span>指标名</span>
-                  <span>数仓表达式</span>
-                  <span>ERP 字段</span>
-                  <span>聚合</span>
-                  <span>容差</span>
-                  <span></span>
-                </div>
-                <div v-for="(metric, metricIndex) in source.metrics" :key="metricIndex" class="metric-row">
-                  <input v-model="metric.name" required placeholder="毛利润" />
-                  <input v-model="metric.warehouse_expression" :disabled="source.type === 'erp'" placeholder="grossProfit" />
-                  <input v-model="metric.erp_field" :disabled="source.type === 'warehouse'" placeholder="grossProfit" />
-                  <select v-model="metric.aggregation">
-                    <option value="sum">sum</option>
-                    <option value="count">count</option>
-                  </select>
-                  <input v-model.number="metric.tolerance" type="number" min="0" step="0.01" />
-                  <button type="button" class="icon-button danger" :disabled="source.metrics.length === 1" @click="removeMetric(source, metricIndex)">删</button>
-                </div>
-              </div>
-            </section>
-          </div>
+          <section class="form-section">
+            <h3>数仓配置</h3>
+            <div class="form-grid compact">
+              <label>
+                数仓表名
+                <input v-model="ruleForm.warehouse_table" required placeholder="bi_profit_statement_report_usd" />
+              </label>
+              <label>
+                数仓日期字段
+                <input v-model="ruleForm.warehouse_date_field" required placeholder="dataDate" />
+              </label>
+              <label>
+                数仓店铺字段
+                <input v-model="ruleForm.warehouse_store_field" required placeholder="storeName" />
+              </label>
+            </div>
+          </section>
+
+          <section class="form-section">
+            <h3>ERP 配置</h3>
+            <div class="form-grid compact">
+              <label>
+                ERP API Path
+                <input v-model="ruleForm.erp_module_path" required placeholder="/bd/profit/report/open/report/seller/summary/list" />
+              </label>
+              <label>
+                ERP 返回日期字段
+                <input v-model="ruleForm.erp_date_field" :required="ruleForm.erp_period_mode === 'response_field'" placeholder="date" />
+              </label>
+              <label>
+                ERP 返回店铺字段
+                <input v-model="ruleForm.erp_store_field" required placeholder="storeName" />
+              </label>
+              <label>
+                周期来源
+                <select v-model="ruleForm.erp_period_mode">
+                  <option value="response_field">返回日期字段</option>
+                  <option value="request_month">请求月份</option>
+                </select>
+              </label>
+            </div>
+            <label class="wide">
+              ERP 请求配置 JSON（币种固定为 USD）
+              <textarea v-model="erpRequestConfigText" rows="7" spellcheck="false"></textarea>
+            </label>
+          </section>
+
+          <section class="form-section">
+            <div class="section-head subtle">
+              <h3>指标</h3>
+              <button type="button" class="secondary" @click="addMetric">添加指标</button>
+            </div>
+            <div class="metric-head">
+              <span>指标名</span>
+              <span>数仓表达式</span>
+              <span>ERP 字段</span>
+              <span>聚合</span>
+              <span>容差</span>
+              <span></span>
+            </div>
+            <div v-for="(metric, index) in ruleForm.metrics" :key="index" class="metric-row">
+              <input v-model="metric.name" required placeholder="毛利润" />
+              <input v-model="metric.warehouse_expression" required placeholder="grossProfit" />
+              <input v-model="metric.erp_field" required placeholder="grossProfit" />
+              <select v-model="metric.aggregation">
+                <option value="sum">sum</option>
+                <option value="count">count</option>
+              </select>
+              <input v-model.number="metric.tolerance" type="number" min="0" step="0.01" />
+              <button type="button" class="icon-button danger" :disabled="ruleForm.metrics.length === 1" @click="removeMetric(index)">删</button>
+            </div>
+          </section>
         </form>
       </section>
 
-      <section v-if="tab === 'run'" class="panel">
+      <section v-if="tab === 'run'" class="panel run-panel">
         <div class="section-head">
           <div>
             <h2>运行对账</h2>
-            <span>选择规则和日期范围后开始核对</span>
+            <span>可一次选择多个规则，同一日期范围批量运行</span>
           </div>
         </div>
-        <form class="run-form" @submit.prevent="run">
-          <label>
-            选择规则
-            <select v-model.number="runForm.rule_id" required>
-              <option disabled value="">请选择</option>
-              <option v-for="rule in rules" :key="rule.id" :value="rule.id">{{ rule.name }}</option>
-            </select>
-          </label>
+        <form class="run-form batch" @submit.prevent="runBatch">
           <label>
             开始日期
             <input v-model="runForm.start_date" type="date" required />
@@ -182,95 +165,119 @@
               <option value="month">按月</option>
             </select>
           </label>
-          <button :disabled="running">{{ running ? '运行中...' : '开始对账' }}</button>
+          <button :disabled="running || selectedRuleIds.length === 0">{{ running ? '运行中...' : `开始对账（${selectedRuleIds.length}）` }}</button>
         </form>
+        <div class="check-list">
+          <label v-for="rule in rules" :key="rule.id" class="check-item">
+            <input v-model="selectedRuleIds" type="checkbox" :value="rule.id" />
+            <span>{{ rule.name }}</span>
+          </label>
+        </div>
       </section>
 
       <section v-if="tab === 'result'" class="panel result-panel">
         <div class="section-head">
           <div>
             <h2>结果查看</h2>
-            <span v-if="currentRun">{{ currentRun.rule_name }} · {{ currentRun.start_date }} 至 {{ currentRun.end_date }}</span>
+            <span>选择多个运行结果，自由筛选月份、指标和规则对比</span>
           </div>
-          <a v-if="currentRun" class="button-link" :href="exportRunUrl(currentRun.id)">导出 Excel</a>
+          <button class="secondary" :disabled="selectedRunIds.length === 0" @click="downloadCompare">导出所选对比</button>
         </div>
 
-        <div v-if="currentRun" class="summary-strip">
-          <div>
-            <span>汇总行</span>
-            <strong>{{ filteredSummaryRows.length }}</strong>
-          </div>
-          <div>
-            <span>店铺明细</span>
-            <strong>{{ currentRun.rows.length }}</strong>
-          </div>
-          <div>
-            <span>状态</span>
-            <strong>{{ runStatusLabel }}</strong>
-          </div>
-        </div>
+        <div class="result-layout">
+          <aside class="run-picker">
+            <div class="section-head subtle">
+              <h3>运行结果</h3>
+              <button class="secondary" @click="refreshRuns">刷新</button>
+            </div>
+            <div class="filters stacked">
+              <select v-model="runFilters.rule_id" @change="refreshRuns">
+                <option value="">全部规则</option>
+                <option v-for="rule in rules" :key="rule.id" :value="rule.id">{{ rule.name }}</option>
+              </select>
+              <select v-model="runFilters.status" @change="refreshRuns">
+                <option value="">全部状态</option>
+                <option value="success">成功</option>
+                <option value="failed">失败</option>
+              </select>
+            </div>
+            <div class="run-list">
+              <label v-for="run in runHistory" :key="run.id" class="run-item">
+                <input v-model="selectedRunIds" type="checkbox" :value="run.id" @change="syncSelectedRuns" />
+                <span>
+                  <strong>{{ run.rule_name }} #{{ run.id }}</strong>
+                  <small>{{ run.start_date }} 至 {{ run.end_date }} · {{ run.status }}</small>
+                </span>
+              </label>
+            </div>
+          </aside>
 
-        <div class="filters">
-          <input v-model="filters.period" placeholder="筛选月份" />
-          <input v-model="filters.metric" placeholder="筛选指标" />
-          <select v-model="filters.status">
-            <option value="">全部状态</option>
-            <option value="matched">一致</option>
-            <option value="minor_diff">轻微差异</option>
-            <option value="major_diff">异常差异</option>
-          </select>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>月份</th>
-                <th>指标</th>
-                <th v-for="source in resultSources" :key="source" class="number">{{ source }}</th>
-                <th v-for="source in diffSources" :key="`diff-${source}`" class="number">差异-{{ source }}</th>
-                <th>状态</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <template v-for="row in filteredSummaryRows" :key="row.key">
-                <tr class="summary-row" :class="row.status" @click="toggleExpand(row.key)">
-                  <td>{{ row.period }}</td>
-                  <td>{{ row.metric }}</td>
-                  <td v-for="source in resultSources" :key="source" class="number">{{ formatNumber(row.values[source]) }}</td>
-                  <td v-for="source in diffSources" :key="`diff-${source}`" class="number">{{ formatNumber(row.diffs[source]) }}</td>
-                  <td>{{ statusLabel(row.status) }}</td>
-                  <td class="drill-action">{{ expandedKey === row.key ? '收起' : '店铺明细' }}</td>
-                </tr>
-                <tr v-if="expandedKey === row.key" class="detail-row">
-                  <td :colspan="4 + resultSources.length + diffSources.length">
-                    <div class="detail-table">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>店铺</th>
-                            <th v-for="source in resultSources" :key="source" class="number">{{ source }}</th>
-                            <th v-for="source in diffSources" :key="`detail-diff-${source}`" class="number">差异-{{ source }}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr v-for="detail in detailRows(row)" :key="`${row.key}-${detail.store}`">
-                            <td>{{ detail.store || '-' }}</td>
-                            <td v-for="source in resultSources" :key="source" class="number">{{ formatNumber(detail.values[source]) }}</td>
-                            <td v-for="source in diffSources" :key="`detail-${source}`" class="number">{{ formatNumber(detail.diffs[source]) }}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </td>
-                </tr>
-              </template>
-              <tr v-if="filteredSummaryRows.length === 0">
-                <td :colspan="4 + resultSources.length + diffSources.length" class="empty-table">暂无结果</td>
-              </tr>
-            </tbody>
-          </table>
+          <section class="compare-area">
+            <div class="summary-strip">
+              <div>
+                <span>已选结果</span>
+                <strong>{{ selectedRuns.length }}</strong>
+              </div>
+              <div>
+                <span>汇总行</span>
+                <strong>{{ filteredCompareRows.length }}</strong>
+              </div>
+              <div>
+                <span>店铺明细</span>
+                <strong>{{ selectedRuns.reduce((sum, run) => sum + run.rows.length, 0) }}</strong>
+              </div>
+            </div>
+            <div class="filters">
+              <input v-model="compareFilters.period" placeholder="筛选月份" />
+              <input v-model="compareFilters.metric" placeholder="筛选指标" />
+              <input v-model="compareFilters.rule" placeholder="筛选规则名" />
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>月份</th>
+                    <th>指标</th>
+                    <th v-for="run in selectedRuns" :key="run.id" class="number">{{ run.rule_name }} #{{ run.id }}</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template v-for="row in filteredCompareRows" :key="row.key">
+                    <tr class="summary-row" @click="toggleExpand(row.key)">
+                      <td>{{ row.period }}</td>
+                      <td>{{ row.metric }}</td>
+                      <td v-for="run in selectedRuns" :key="run.id" class="number">{{ formatNumber(row.values[run.id]) }}</td>
+                      <td class="drill-action">{{ expandedKey === row.key ? '收起' : '店铺明细' }}</td>
+                    </tr>
+                    <tr v-if="expandedKey === row.key" class="detail-row">
+                      <td :colspan="3 + selectedRuns.length">
+                        <div class="detail-table">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>店铺</th>
+                                <th v-for="run in selectedRuns" :key="run.id" class="number">{{ run.rule_name }} #{{ run.id }}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="detail in detailRows(row)" :key="`${row.key}-${detail.store}`">
+                                <td>{{ detail.store || '-' }}</td>
+                                <td v-for="run in selectedRuns" :key="run.id" class="number">{{ formatNumber(detail.values[run.id]) }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                  <tr v-if="filteredCompareRows.length === 0">
+                    <td :colspan="3 + selectedRuns.length" class="empty-table">请选择运行结果，或调整筛选条件</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </section>
     </section>
@@ -279,7 +286,16 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { createRule, deleteRule, exportRunUrl, listRules, runReconcile, updateRule } from './api'
+import {
+  batchRunReconcile,
+  createRule,
+  deleteRule,
+  exportCompareRuns,
+  getRun,
+  listRules,
+  listRuns,
+  updateRule,
+} from './api'
 
 const defaultRequestConfig = (mode = 'page') => ({
   startDateParam: 'startDate',
@@ -290,94 +306,72 @@ const defaultRequestConfig = (mode = 'page') => ({
   lengthParam: mode === 'offset' ? 'length' : '',
   paginationMode: mode,
   monthlyQueryParam: mode === 'page' ? 'monthlyQuery' : '',
-  extraParams: {
-    sids: [],
-    mids: [],
-    currencyCode: 'USD',
-  },
+  extraParams: { sids: [], mids: [], currencyCode: 'USD' },
 })
 
-const emptyMetric = (name = '') => ({
-  name,
-  warehouse_expression: '',
-  erp_field: '',
-  aggregation: 'sum',
-  tolerance: 0,
-})
-
-const emptySource = (type = 'warehouse') => ({
-  name: type === 'warehouse' ? '数仓' : 'ERP',
-  type,
-  table_or_path: '',
-  date_field: type === 'warehouse' ? 'dataDate' : 'date',
-  store_field: 'storeName',
-  period_mode: 'response_field',
-  request_config: type === 'erp' ? defaultRequestConfig() : {},
-  request_config_text: type === 'erp' ? JSON.stringify(defaultRequestConfig(), null, 2) : '',
-  metrics: [emptyMetric()],
-})
-
+const emptyMetric = () => ({ name: '', warehouse_expression: '', erp_field: '', aggregation: 'sum', tolerance: 0 })
 const emptyRule = () => ({
   name: '',
-  sources: [emptySource('warehouse'), emptySource('erp')],
-  comparison_base_source: '数仓',
+  warehouse_table: '',
+  warehouse_date_field: 'dataDate',
+  warehouse_store_field: 'storeName',
+  erp_module_path: '',
+  erp_date_field: 'date',
+  erp_store_field: 'storeName',
+  erp_period_mode: 'response_field',
+  metrics: [emptyMetric()],
 })
 
 const tab = ref('rules')
 const rules = ref([])
-const currentRun = ref(null)
+const runHistory = ref([])
+const selectedRuns = ref([])
+const selectedRuleIds = ref([])
+const selectedRunIds = ref([])
 const running = ref(false)
 const message = ref('')
 const messageType = ref('info')
 const editingRuleId = ref(null)
 const ruleSearch = ref('')
 const expandedKey = ref('')
+const erpRequestConfigText = ref(JSON.stringify(defaultRequestConfig(), null, 2))
 const ruleForm = reactive(emptyRule())
-const runForm = reactive({ rule_id: '', start_date: '', end_date: '', granularity: 'month' })
-const filters = reactive({ period: '', metric: '', status: '' })
+const runForm = reactive({ start_date: '', end_date: '', granularity: 'month' })
+const runFilters = reactive({ rule_id: '', status: '' })
+const compareFilters = reactive({ period: '', metric: '', rule: '' })
 
 const filteredRules = computed(() => {
   const keyword = ruleSearch.value.trim().toLowerCase()
-  if (!keyword) return rules.value
-  return rules.value.filter((rule) => rule.name.toLowerCase().includes(keyword))
+  return keyword ? rules.value.filter((rule) => rule.name.toLowerCase().includes(keyword)) : rules.value
 })
 
-const summaryRows = computed(() => {
-  const rows = currentRun.value?.summary_rows || []
-  return rows
-    .map((row) => ({ ...row, key: `${row.period}__${row.metric}` }))
-    .sort((a, b) => a.period.localeCompare(b.period) || a.metric.localeCompare(b.metric, 'zh-CN'))
-})
-
-const resultSources = computed(() => {
-  const names = new Set()
-  for (const row of summaryRows.value) {
-    for (const source of Object.keys(row.values || {})) names.add(source)
+const compareRows = computed(() => {
+  const groups = new Map()
+  for (const run of selectedRuns.value) {
+    for (const row of run.summary_rows || []) {
+      const key = `${row.period}__${row.metric}`
+      if (!groups.has(key)) groups.set(key, { key, period: row.period, metric: row.metric, values: {} })
+      groups.get(key).values[run.id] = Object.values(row.values || {}).reduce((sum, value) => sum + Number(value || 0), 0)
+    }
   }
-  return Array.from(names)
+  return Array.from(groups.values()).sort((a, b) => a.period.localeCompare(b.period) || a.metric.localeCompare(b.metric, 'zh-CN'))
 })
 
-const diffSources = computed(() => {
-  const names = new Set()
-  for (const row of summaryRows.value) {
-    for (const source of Object.keys(row.diffs || {})) names.add(source)
-  }
-  return Array.from(names)
-})
-
-const filteredSummaryRows = computed(() => {
-  return summaryRows.value.filter((row) => {
-    return (!filters.period || row.period.includes(filters.period))
-      && (!filters.metric || row.metric.includes(filters.metric))
-      && (!filters.status || row.status === filters.status)
-  })
-})
-
-const runStatusLabel = computed(() => {
-  if (!currentRun.value) return '-'
-  if (summaryRows.value.some((row) => row.status === 'major_diff')) return '存在异常差异'
-  if (summaryRows.value.some((row) => row.status === 'minor_diff')) return '存在轻微差异'
-  return '一致'
+const filteredCompareRows = computed(() => {
+  const ruleKeyword = compareFilters.rule.trim().toLowerCase()
+  const allowedRunIds = ruleKeyword
+    ? new Set(selectedRuns.value.filter((run) => run.rule_name.toLowerCase().includes(ruleKeyword)).map((run) => run.id))
+    : null
+  return compareRows.value
+    .map((row) => {
+      if (!allowedRunIds) return row
+      return { ...row, values: Object.fromEntries(Object.entries(row.values).filter(([runId]) => allowedRunIds.has(Number(runId)))) }
+    })
+    .filter((row) => {
+      return (!compareFilters.period || row.period.includes(compareFilters.period))
+        && (!compareFilters.metric || row.metric.includes(compareFilters.metric))
+        && Object.keys(row.values).length > 0
+    })
 })
 
 function notify(text, type = 'info') {
@@ -390,94 +384,15 @@ function notify(text, type = 'info') {
 
 async function refreshRules() {
   rules.value = await listRules()
-  if (!runForm.rule_id && rules.value.length > 0) runForm.rule_id = rules.value[0].id
 }
 
-function hydrateSource(source) {
-  const hydrated = {
-    ...source,
-    request_config: source.request_config || {},
-    request_config_text: source.type === 'erp' ? JSON.stringify(forceUsd(source.request_config || defaultRequestConfig()), null, 2) : '',
-    metrics: source.metrics?.length ? source.metrics : [emptyMetric()],
-  }
-  return hydrated
+async function refreshRuns() {
+  runHistory.value = await listRuns({ ...runFilters, limit: 200 })
 }
 
-function normalizeRule(rule) {
-  if (rule.sources?.length) {
-    return {
-      name: rule.name,
-      sources: rule.sources.map(hydrateSource),
-      comparison_base_source: rule.comparison_base_source || rule.sources[0].name,
-    }
-  }
-  return {
-    name: rule.name,
-    comparison_base_source: '数仓',
-    sources: [
-      hydrateSource({
-        name: '数仓',
-        type: 'warehouse',
-        table_or_path: rule.warehouse_table,
-        date_field: rule.warehouse_date_field,
-        store_field: rule.warehouse_store_field,
-        period_mode: 'response_field',
-        metrics: rule.metrics,
-      }),
-      hydrateSource({
-        name: 'ERP',
-        type: 'erp',
-        table_or_path: rule.erp_module_path,
-        date_field: rule.erp_date_field,
-        store_field: rule.erp_store_field,
-        period_mode: 'response_field',
-        request_config: rule.erp_request_config,
-        metrics: rule.metrics,
-      }),
-    ],
-  }
-}
-
-function resetRuleForm() {
-  Object.assign(ruleForm, emptyRule())
-  editingRuleId.value = null
-}
-
-function editRule(rule) {
-  Object.assign(ruleForm, normalizeRule(rule))
-  editingRuleId.value = rule.id
-  syncBaseSource()
-}
-
-function addSource(type) {
-  const source = emptySource(type)
-  let index = 1
-  const baseName = source.name
-  while (ruleForm.sources.some((item) => item.name === source.name)) {
-    index += 1
-    source.name = `${baseName}${index}`
-  }
-  ruleForm.sources.push(source)
-  syncBaseSource()
-}
-
-function removeSource(index) {
-  ruleForm.sources.splice(index, 1)
-  syncBaseSource()
-}
-
-function addMetric(source) {
-  source.metrics.push(emptyMetric())
-}
-
-function removeMetric(source, index) {
-  source.metrics.splice(index, 1)
-}
-
-function syncBaseSource() {
-  if (!ruleForm.sources.some((source) => source.name === ruleForm.comparison_base_source)) {
-    ruleForm.comparison_base_source = ruleForm.sources[0]?.name || ''
-  }
+async function openResults() {
+  tab.value = 'result'
+  await refreshRuns()
 }
 
 function forceUsd(config) {
@@ -486,30 +401,83 @@ function forceUsd(config) {
   return next
 }
 
+function firstSource(rule, type) {
+  return (rule.sources || []).find((source) => source.type === type)
+}
+
+function normalizeRule(rule) {
+  const warehouse = firstSource(rule, 'warehouse')
+  const erp = firstSource(rule, 'erp')
+  return {
+    name: rule.name,
+    warehouse_table: rule.warehouse_table || warehouse?.table_or_path || '',
+    warehouse_date_field: rule.warehouse_date_field || warehouse?.date_field || 'dataDate',
+    warehouse_store_field: rule.warehouse_store_field || warehouse?.store_field || 'storeName',
+    erp_module_path: rule.erp_module_path || erp?.table_or_path || '',
+    erp_date_field: rule.erp_date_field || erp?.date_field || 'date',
+    erp_store_field: rule.erp_store_field || erp?.store_field || 'storeName',
+    erp_period_mode: erp?.period_mode || 'response_field',
+    erp_request_config: forceUsd(rule.erp_request_config || erp?.request_config || defaultRequestConfig()),
+    metrics: rule.metrics?.length ? rule.metrics : (warehouse?.metrics || erp?.metrics || [emptyMetric()]),
+  }
+}
+
+function resetRuleForm() {
+  Object.assign(ruleForm, emptyRule())
+  erpRequestConfigText.value = JSON.stringify(defaultRequestConfig(), null, 2)
+  editingRuleId.value = null
+}
+
+function editRule(rule) {
+  const normalized = normalizeRule(rule)
+  Object.assign(ruleForm, normalized)
+  erpRequestConfigText.value = JSON.stringify(normalized.erp_request_config, null, 2)
+  editingRuleId.value = rule.id
+}
+
+function addMetric() {
+  ruleForm.metrics.push(emptyMetric())
+}
+
+function removeMetric(index) {
+  ruleForm.metrics.splice(index, 1)
+}
+
 function payloadFromForm() {
-  const sources = ruleForm.sources.map((source) => {
-    const requestConfig = source.type === 'erp' ? forceUsd(JSON.parse(source.request_config_text || '{}')) : {}
-    return {
-      name: source.name,
-      type: source.type,
-      table_or_path: source.table_or_path,
-      date_field: source.period_mode === 'request_month' ? (source.date_field || '') : source.date_field,
-      store_field: source.store_field,
-      period_mode: source.type === 'erp' ? source.period_mode : 'response_field',
-      request_config: requestConfig,
-      metrics: source.metrics.map((metric) => ({
-        name: metric.name,
-        warehouse_expression: source.type === 'warehouse' ? metric.warehouse_expression : (metric.warehouse_expression || '*'),
-        erp_field: source.type === 'erp' ? metric.erp_field : (metric.erp_field || metric.name),
-        aggregation: metric.aggregation,
-        tolerance: metric.tolerance || 0,
-      })),
-    }
-  })
+  const erpRequestConfig = forceUsd(JSON.parse(erpRequestConfigText.value || '{}'))
   return {
     name: ruleForm.name,
-    sources,
-    comparison_base_source: ruleForm.comparison_base_source || sources[0]?.name || '',
+    warehouse_table: ruleForm.warehouse_table,
+    warehouse_date_field: ruleForm.warehouse_date_field,
+    warehouse_store_field: ruleForm.warehouse_store_field,
+    erp_module_path: ruleForm.erp_module_path,
+    erp_date_field: ruleForm.erp_period_mode === 'request_month' ? '' : ruleForm.erp_date_field,
+    erp_store_field: ruleForm.erp_store_field,
+    erp_request_config: erpRequestConfig,
+    metrics: ruleForm.metrics,
+    comparison_base_source: '数仓',
+    sources: [
+      {
+        name: '数仓',
+        type: 'warehouse',
+        table_or_path: ruleForm.warehouse_table,
+        date_field: ruleForm.warehouse_date_field,
+        store_field: ruleForm.warehouse_store_field,
+        period_mode: 'response_field',
+        request_config: {},
+        metrics: ruleForm.metrics,
+      },
+      {
+        name: 'ERP',
+        type: 'erp',
+        table_or_path: ruleForm.erp_module_path,
+        date_field: ruleForm.erp_period_mode === 'request_month' ? '' : ruleForm.erp_date_field,
+        store_field: ruleForm.erp_store_field,
+        period_mode: ruleForm.erp_period_mode,
+        request_config: erpRequestConfig,
+        metrics: ruleForm.metrics,
+      },
+    ],
   }
 }
 
@@ -542,17 +510,26 @@ async function removeRule(id) {
   }
 }
 
-async function run() {
+async function runBatch() {
   running.value = true
-  expandedKey.value = ''
   try {
-    currentRun.value = await runReconcile(runForm)
+    const result = await batchRunReconcile({ ...runForm, rule_ids: selectedRuleIds.value })
+    notify(`运行完成：成功 ${result.runs.length} 个，失败 ${result.failed_runs.length} 个`, result.failed_runs.length ? 'error' : 'success')
+    selectedRunIds.value = result.runs.map((run) => run.id)
+    selectedRuns.value = result.runs
+    await refreshRuns()
     tab.value = 'result'
-    notify('对账完成', 'success')
   } catch (error) {
-    notify(error.message, 'error')
+    notify(`运行失败：${error.message}`, 'error')
   } finally {
     running.value = false
+  }
+}
+
+async function syncSelectedRuns() {
+  selectedRuns.value = []
+  for (const runId of selectedRunIds.value) {
+    selectedRuns.value.push(await getRun(runId))
   }
 }
 
@@ -561,38 +538,37 @@ function toggleExpand(key) {
 }
 
 function detailRows(summary) {
-  const rows = (currentRun.value?.rows || []).filter((row) => row.period === summary.period && row.metric === summary.metric)
-  const baseSource = currentRuleBaseSource()
   const groups = new Map()
-  for (const row of rows) {
-    if (!groups.has(row.store)) groups.set(row.store, { store: row.store, values: {}, diffs: {} })
-    groups.get(row.store).values[row.source] = Number(row.value || 0)
-  }
-  for (const group of groups.values()) {
-    const baseValue = group.values[baseSource] || 0
-    for (const source of diffSources.value) {
-      group.diffs[source] = baseValue - (group.values[source] || 0)
+  for (const run of selectedRuns.value) {
+    for (const row of run.rows || []) {
+      if (row.period !== summary.period || row.metric !== summary.metric) continue
+      if (!groups.has(row.store)) groups.set(row.store, { store: row.store, values: {} })
+      groups.get(row.store).values[run.id] = (groups.get(row.store).values[run.id] || 0) + Number(row.value || 0)
     }
   }
   return Array.from(groups.values()).sort((a, b) => String(a.store).localeCompare(String(b.store), 'zh-CN'))
 }
 
-function currentRuleBaseSource() {
-  const rule = rules.value.find((item) => item.id === currentRun.value?.rule_id)
-  return rule?.comparison_base_source || resultSources.value[0] || ''
+async function downloadCompare() {
+  try {
+    await exportCompareRuns(selectedRunIds.value)
+  } catch (error) {
+    notify(`导出失败：${error.message}`, 'error')
+  }
 }
 
 function formatNumber(value) {
   return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
 }
 
-function statusLabel(status) {
-  return { matched: '一致', minor_diff: '轻微差异', major_diff: '异常差异' }[status] || status
+function formatDateTime(value) {
+  return String(value).replace('T', ' ').slice(0, 16)
 }
 
 onMounted(async () => {
   try {
     await refreshRules()
+    await refreshRuns()
   } catch (error) {
     notify(error.message, 'error')
   }

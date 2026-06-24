@@ -79,6 +79,20 @@ class RunRequest(BaseModel):
         return value
 
 
+class BatchRunRequest(BaseModel):
+    rule_ids: list[int] = Field(min_items=1)
+    start_date: date
+    end_date: date
+    granularity: Granularity = "day"
+
+    @validator("end_date")
+    def end_must_not_precede_start(cls, value: date, values: Any) -> date:
+        start_date = values.get("start_date")
+        if start_date and value < start_date:
+            raise ValueError("end_date must be greater than or equal to start_date")
+        return value
+
+
 class ReconcileRow(BaseModel):
     period: str
     store: str
@@ -113,6 +127,35 @@ class ReconcileRun(BaseModel):
     summary_rows: list[ReconcileSummaryRow] = Field(default_factory=list)
     error_message: Optional[str] = None
     created_at: datetime
+
+
+class RunListItem(BaseModel):
+    id: int
+    rule_id: int
+    rule_name: str
+    start_date: date
+    end_date: date
+    granularity: Granularity
+    status: str
+    error_message: Optional[str] = None
+    created_at: datetime
+
+
+class BatchRunFailure(BaseModel):
+    rule_id: int
+    rule_name: str
+    run: Optional[ReconcileRun] = None
+    error_message: str
+
+
+class BatchRunResponse(BaseModel):
+    runs: list[ReconcileRun]
+    failed_runs: list[BatchRunFailure]
+    created_at: datetime
+
+
+class CompareExportRequest(BaseModel):
+    run_ids: list[int] = Field(min_items=1)
 
 
 class HealthResponse(BaseModel):
