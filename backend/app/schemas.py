@@ -33,7 +33,7 @@ class RuleBase(BaseModel):
     erp_date_field: str = Field(min_length=1, max_length=120)
     erp_store_field: str = Field(min_length=1, max_length=120)
     erp_request_config: dict[str, Any] = Field(default_factory=dict)
-    metrics: list[Metric] = Field(min_length=1)
+    metrics: list[Metric] = Field(min_items=1)
 
 
 class RuleCreate(RuleBase):
