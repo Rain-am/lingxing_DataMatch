@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field, validator
 Aggregation = Literal["sum", "count"]
 Granularity = Literal["day", "month"]
 ReconcileStatus = Literal["matched", "minor_diff", "major_diff"]
+SourceType = Literal["warehouse", "erp"]
+PeriodMode = Literal["response_field", "request_month"]
 
 
 class Metric(BaseModel):
@@ -24,16 +26,29 @@ class Metric(BaseModel):
         return value
 
 
+class Source(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    type: SourceType
+    table_or_path: str = Field(min_length=1, max_length=300)
+    date_field: str = Field(default="", max_length=120)
+    store_field: str = Field(min_length=1, max_length=120)
+    period_mode: PeriodMode = "response_field"
+    request_config: dict[str, Any] = Field(default_factory=dict)
+    metrics: list[Metric] = Field(min_items=1)
+
+
 class RuleBase(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    warehouse_table: str = Field(min_length=1, max_length=120)
-    warehouse_date_field: str = Field(min_length=1, max_length=120)
-    warehouse_store_field: str = Field(min_length=1, max_length=120)
-    erp_module_path: str = Field(min_length=1, max_length=300)
-    erp_date_field: str = Field(min_length=1, max_length=120)
-    erp_store_field: str = Field(min_length=1, max_length=120)
+    warehouse_table: str = ""
+    warehouse_date_field: str = ""
+    warehouse_store_field: str = ""
+    erp_module_path: str = ""
+    erp_date_field: str = ""
+    erp_store_field: str = ""
     erp_request_config: dict[str, Any] = Field(default_factory=dict)
-    metrics: list[Metric] = Field(min_items=1)
+    metrics: list[Metric] = Field(default_factory=list)
+    sources: list[Source] = Field(default_factory=list)
+    comparison_base_source: str = ""
 
 
 class RuleCreate(RuleBase):
@@ -68,11 +83,21 @@ class ReconcileRow(BaseModel):
     period: str
     store: str
     metric: str
-    warehouse_value: Decimal
-    erp_value: Decimal
-    diff_value: Decimal
-    diff_rate: Optional[Decimal]
+    source: str = ""
+    value: Decimal = Decimal("0")
+    warehouse_value: Decimal = Decimal("0")
+    erp_value: Decimal = Decimal("0")
+    diff_value: Decimal = Decimal("0")
+    diff_rate: Optional[Decimal] = None
     tolerance: Decimal
+    status: ReconcileStatus
+
+
+class ReconcileSummaryRow(BaseModel):
+    period: str
+    metric: str
+    values: dict[str, Decimal]
+    diffs: dict[str, Decimal]
     status: ReconcileStatus
 
 
@@ -85,6 +110,7 @@ class ReconcileRun(BaseModel):
     granularity: Granularity
     status: str
     rows: list[ReconcileRow]
+    summary_rows: list[ReconcileSummaryRow] = Field(default_factory=list)
     error_message: Optional[str] = None
     created_at: datetime
 

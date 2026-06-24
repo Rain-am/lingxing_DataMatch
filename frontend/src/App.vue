@@ -3,7 +3,7 @@
     <header class="topbar">
       <div>
         <h1>领星数仓对数</h1>
-        <p>按周期汇总数仓与 ERP 指标，支持店铺下钻核对。</p>
+        <p>按月份汇总多个数仓与 ERP 来源，支持店铺下钻核对。</p>
       </div>
       <nav class="topnav">
         <button :class="{ active: tab === 'rules' }" @click="tab = 'rules'">规则管理</button>
@@ -24,9 +24,7 @@
             </div>
             <button class="secondary" @click="resetRuleForm">新建</button>
           </div>
-
           <input v-model="ruleSearch" class="search-input" placeholder="搜索规则名" />
-
           <div class="rule-list">
             <button
               v-for="rule in filteredRules"
@@ -57,63 +55,99 @@
           <div class="form-grid compact">
             <label>
               规则名称
-              <input v-model="ruleForm.name" required placeholder="如：利润报表月度对数" />
+              <input v-model="ruleForm.name" required placeholder="如：利润报表与订单利润对数" />
             </label>
             <label>
-              数仓表名
-              <input v-model="ruleForm.warehouse_table" required placeholder="bi_profit_statement_report_asin_usd" />
+              基准来源
+              <select v-model="ruleForm.comparison_base_source" required>
+                <option v-for="source in ruleForm.sources" :key="source.name" :value="source.name">{{ source.name }}</option>
+              </select>
             </label>
             <label>
-              数仓日期字段
-              <input v-model="ruleForm.warehouse_date_field" required placeholder="dataDate" />
-            </label>
-            <label>
-              数仓店铺字段
-              <input v-model="ruleForm.warehouse_store_field" required placeholder="storeName" />
-            </label>
-            <label>
-              ERP API Path
-              <input v-model="ruleForm.erp_module_path" required placeholder="/bd/profit/report/open/report/seller/summary/list" />
-            </label>
-            <label>
-              ERP 返回日期字段
-              <input v-model="ruleForm.erp_date_field" required placeholder="date" />
-            </label>
-            <label>
-              ERP 返回店铺字段
-              <input v-model="ruleForm.erp_store_field" required placeholder="storeName" />
+              ERP 币种
+              <input value="USD" disabled />
             </label>
           </div>
 
-          <label class="wide">
-            ERP 请求配置 JSON
-            <textarea v-model="erpRequestConfigText" rows="8" spellcheck="false"></textarea>
-          </label>
-
-          <div class="metrics-editor">
+          <div class="sources-editor">
             <div class="section-head subtle">
-              <h3>指标</h3>
-              <button type="button" class="secondary" @click="addMetric">添加指标</button>
+              <h3>数据来源</h3>
+              <div class="toolbar">
+                <button type="button" class="secondary" @click="addSource('warehouse')">添加数仓来源</button>
+                <button type="button" class="secondary" @click="addSource('erp')">添加 ERP 来源</button>
+              </div>
             </div>
-            <div class="metric-head">
-              <span>指标名</span>
-              <span>数仓表达式</span>
-              <span>ERP 字段</span>
-              <span>聚合</span>
-              <span>容差</span>
-              <span></span>
-            </div>
-            <div v-for="(metric, index) in ruleForm.metrics" :key="index" class="metric-row">
-              <input v-model="metric.name" required placeholder="毛利润" />
-              <input v-model="metric.warehouse_expression" required placeholder="grossProfit" />
-              <input v-model="metric.erp_field" required placeholder="grossProfit" />
-              <select v-model="metric.aggregation">
-                <option value="sum">sum</option>
-                <option value="count">count</option>
-              </select>
-              <input v-model.number="metric.tolerance" type="number" min="0" step="0.01" />
-              <button type="button" class="icon-button danger" @click="removeMetric(index)" :disabled="ruleForm.metrics.length === 1">删</button>
-            </div>
+
+            <section v-for="(source, sourceIndex) in ruleForm.sources" :key="sourceIndex" class="source-block">
+              <div class="section-head subtle">
+                <h3>{{ source.name || '未命名来源' }}</h3>
+                <button type="button" class="icon-button danger" :disabled="ruleForm.sources.length <= 2" @click="removeSource(sourceIndex)">删</button>
+              </div>
+
+              <div class="form-grid compact">
+                <label>
+                  来源名称
+                  <input v-model="source.name" required @change="syncBaseSource" />
+                </label>
+                <label>
+                  来源类型
+                  <select v-model="source.type">
+                    <option value="warehouse">数仓</option>
+                    <option value="erp">ERP</option>
+                  </select>
+                </label>
+                <label>
+                  {{ source.type === 'warehouse' ? '数仓表名' : 'ERP API Path' }}
+                  <input v-model="source.table_or_path" required />
+                </label>
+                <label>
+                  {{ source.type === 'warehouse' ? '数仓日期字段' : 'ERP 返回日期字段' }}
+                  <input v-model="source.date_field" :required="source.type === 'warehouse' || source.period_mode === 'response_field'" />
+                </label>
+                <label>
+                  {{ source.type === 'warehouse' ? '数仓店铺字段' : 'ERP 返回店铺字段' }}
+                  <input v-model="source.store_field" required />
+                </label>
+                <label v-if="source.type === 'erp'">
+                  周期来源
+                  <select v-model="source.period_mode">
+                    <option value="response_field">返回日期字段</option>
+                    <option value="request_month">请求月份</option>
+                  </select>
+                </label>
+              </div>
+
+              <label v-if="source.type === 'erp'" class="wide">
+                ERP 请求配置 JSON（币种固定为 USD）
+                <textarea v-model="source.request_config_text" rows="7" spellcheck="false"></textarea>
+              </label>
+
+              <div class="metrics-editor">
+                <div class="section-head subtle">
+                  <h3>指标</h3>
+                  <button type="button" class="secondary" @click="addMetric(source)">添加指标</button>
+                </div>
+                <div class="metric-head">
+                  <span>指标名</span>
+                  <span>数仓表达式</span>
+                  <span>ERP 字段</span>
+                  <span>聚合</span>
+                  <span>容差</span>
+                  <span></span>
+                </div>
+                <div v-for="(metric, metricIndex) in source.metrics" :key="metricIndex" class="metric-row">
+                  <input v-model="metric.name" required placeholder="毛利润" />
+                  <input v-model="metric.warehouse_expression" :disabled="source.type === 'erp'" placeholder="grossProfit" />
+                  <input v-model="metric.erp_field" :disabled="source.type === 'warehouse'" placeholder="grossProfit" />
+                  <select v-model="metric.aggregation">
+                    <option value="sum">sum</option>
+                    <option value="count">count</option>
+                  </select>
+                  <input v-model.number="metric.tolerance" type="number" min="0" step="0.01" />
+                  <button type="button" class="icon-button danger" :disabled="source.metrics.length === 1" @click="removeMetric(source, metricIndex)">删</button>
+                </div>
+              </div>
+            </section>
           </div>
         </form>
       </section>
@@ -193,10 +227,8 @@
               <tr>
                 <th>月份</th>
                 <th>指标</th>
-                <th class="number">数仓合计</th>
-                <th class="number">ERP 合计</th>
-                <th class="number">差异值</th>
-                <th class="number">差异率</th>
+                <th v-for="source in resultSources" :key="source" class="number">{{ source }}</th>
+                <th v-for="source in diffSources" :key="`diff-${source}`" class="number">差异-{{ source }}</th>
                 <th>状态</th>
                 <th></th>
               </tr>
@@ -206,35 +238,27 @@
                 <tr class="summary-row" :class="row.status" @click="toggleExpand(row.key)">
                   <td>{{ row.period }}</td>
                   <td>{{ row.metric }}</td>
-                  <td class="number">{{ formatNumber(row.warehouse_value) }}</td>
-                  <td class="number">{{ formatNumber(row.erp_value) }}</td>
-                  <td class="number">{{ formatNumber(row.diff_value) }}</td>
-                  <td class="number">{{ formatRate(row.diff_rate) }}</td>
+                  <td v-for="source in resultSources" :key="source" class="number">{{ formatNumber(row.values[source]) }}</td>
+                  <td v-for="source in diffSources" :key="`diff-${source}`" class="number">{{ formatNumber(row.diffs[source]) }}</td>
                   <td>{{ statusLabel(row.status) }}</td>
                   <td class="drill-action">{{ expandedKey === row.key ? '收起' : '店铺明细' }}</td>
                 </tr>
                 <tr v-if="expandedKey === row.key" class="detail-row">
-                  <td colspan="8">
+                  <td :colspan="4 + resultSources.length + diffSources.length">
                     <div class="detail-table">
                       <table>
                         <thead>
                           <tr>
                             <th>店铺</th>
-                            <th class="number">数仓值</th>
-                            <th class="number">ERP 值</th>
-                            <th class="number">差异值</th>
-                            <th class="number">差异率</th>
-                            <th>状态</th>
+                            <th v-for="source in resultSources" :key="source" class="number">{{ source }}</th>
+                            <th v-for="source in diffSources" :key="`detail-diff-${source}`" class="number">差异-{{ source }}</th>
                           </tr>
                         </thead>
                         <tbody>
-                          <tr v-for="detail in row.details" :key="`${row.key}-${detail.store}`" :class="detail.status">
+                          <tr v-for="detail in detailRows(row)" :key="`${row.key}-${detail.store}`">
                             <td>{{ detail.store || '-' }}</td>
-                            <td class="number">{{ formatNumber(detail.warehouse_value) }}</td>
-                            <td class="number">{{ formatNumber(detail.erp_value) }}</td>
-                            <td class="number">{{ formatNumber(detail.diff_value) }}</td>
-                            <td class="number">{{ formatRate(detail.diff_rate) }}</td>
-                            <td>{{ statusLabel(detail.status) }}</td>
+                            <td v-for="source in resultSources" :key="source" class="number">{{ formatNumber(detail.values[source]) }}</td>
+                            <td v-for="source in diffSources" :key="`detail-${source}`" class="number">{{ formatNumber(detail.diffs[source]) }}</td>
                           </tr>
                         </tbody>
                       </table>
@@ -243,7 +267,7 @@
                 </tr>
               </template>
               <tr v-if="filteredSummaryRows.length === 0">
-                <td colspan="8" class="empty-table">暂无结果</td>
+                <td :colspan="4 + resultSources.length + diffSources.length" class="empty-table">暂无结果</td>
               </tr>
             </tbody>
           </table>
@@ -257,17 +281,46 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { createRule, deleteRule, exportRunUrl, listRules, runReconcile, updateRule } from './api'
 
-const defaultRequestConfig = () => ({
+const defaultRequestConfig = (mode = 'page') => ({
   startDateParam: 'startDate',
   endDateParam: 'endDate',
-  pageParam: 'page',
-  pageSizeParam: 'pageSize',
-  monthlyQueryParam: 'monthlyQuery',
+  pageParam: mode === 'page' ? 'page' : '',
+  pageSizeParam: mode === 'page' ? 'pageSize' : '',
+  offsetParam: mode === 'offset' ? 'offset' : '',
+  lengthParam: mode === 'offset' ? 'length' : '',
+  paginationMode: mode,
+  monthlyQueryParam: mode === 'page' ? 'monthlyQuery' : '',
   extraParams: {
     sids: [],
     mids: [],
-    currencyCode: 'CNY',
+    currencyCode: 'USD',
   },
+})
+
+const emptyMetric = (name = '') => ({
+  name,
+  warehouse_expression: '',
+  erp_field: '',
+  aggregation: 'sum',
+  tolerance: 0,
+})
+
+const emptySource = (type = 'warehouse') => ({
+  name: type === 'warehouse' ? '数仓' : 'ERP',
+  type,
+  table_or_path: '',
+  date_field: type === 'warehouse' ? 'dataDate' : 'date',
+  store_field: 'storeName',
+  period_mode: 'response_field',
+  request_config: type === 'erp' ? defaultRequestConfig() : {},
+  request_config_text: type === 'erp' ? JSON.stringify(defaultRequestConfig(), null, 2) : '',
+  metrics: [emptyMetric()],
+})
+
+const emptyRule = () => ({
+  name: '',
+  sources: [emptySource('warehouse'), emptySource('erp')],
+  comparison_base_source: '数仓',
 })
 
 const tab = ref('rules')
@@ -277,42 +330,11 @@ const running = ref(false)
 const message = ref('')
 const messageType = ref('info')
 const editingRuleId = ref(null)
-const erpRequestConfigText = ref(JSON.stringify(defaultRequestConfig(), null, 2))
 const ruleSearch = ref('')
 const expandedKey = ref('')
-
-const emptyMetric = () => ({
-  name: '',
-  warehouse_expression: '',
-  erp_field: '',
-  aggregation: 'sum',
-  tolerance: 0,
-})
-
-const emptyRule = () => ({
-  name: '',
-  warehouse_table: '',
-  warehouse_date_field: '',
-  warehouse_store_field: '',
-  erp_module_path: '',
-  erp_date_field: '',
-  erp_store_field: '',
-  erp_request_config: defaultRequestConfig(),
-  metrics: [emptyMetric()],
-})
-
 const ruleForm = reactive(emptyRule())
-const runForm = reactive({
-  rule_id: '',
-  start_date: '',
-  end_date: '',
-  granularity: 'month',
-})
-const filters = reactive({
-  period: '',
-  metric: '',
-  status: '',
-})
+const runForm = reactive({ rule_id: '', start_date: '', end_date: '', granularity: 'month' })
+const filters = reactive({ period: '', metric: '', status: '' })
 
 const filteredRules = computed(() => {
   const keyword = ruleSearch.value.trim().toLowerCase()
@@ -321,49 +343,33 @@ const filteredRules = computed(() => {
 })
 
 const summaryRows = computed(() => {
-  if (!currentRun.value) return []
-  const severity = { matched: 0, minor_diff: 1, major_diff: 2 }
-  const labelBySeverity = ['matched', 'minor_diff', 'major_diff']
-  const groups = new Map()
-
-  for (const row of currentRun.value.rows) {
-    const key = `${row.period}__${row.metric}`
-    if (!groups.has(key)) {
-      groups.set(key, {
-        key,
-        period: row.period,
-        metric: row.metric,
-        warehouse_value: 0,
-        erp_value: 0,
-        diff_value: 0,
-        status_score: 0,
-        details: [],
-      })
-    }
-    const group = groups.get(key)
-    group.warehouse_value += Number(row.warehouse_value || 0)
-    group.erp_value += Number(row.erp_value || 0)
-    group.diff_value += Number(row.diff_value || 0)
-    group.status_score = Math.max(group.status_score, severity[row.status] ?? 0)
-    group.details.push(row)
-  }
-
-  return Array.from(groups.values())
-    .map((row) => ({
-      ...row,
-      diff_rate: row.erp_value === 0 ? null : row.diff_value / row.erp_value,
-      status: labelBySeverity[row.status_score] || 'matched',
-      details: [...row.details].sort((a, b) => String(a.store).localeCompare(String(b.store), 'zh-CN')),
-    }))
+  const rows = currentRun.value?.summary_rows || []
+  return rows
+    .map((row) => ({ ...row, key: `${row.period}__${row.metric}` }))
     .sort((a, b) => a.period.localeCompare(b.period) || a.metric.localeCompare(b.metric, 'zh-CN'))
+})
+
+const resultSources = computed(() => {
+  const names = new Set()
+  for (const row of summaryRows.value) {
+    for (const source of Object.keys(row.values || {})) names.add(source)
+  }
+  return Array.from(names)
+})
+
+const diffSources = computed(() => {
+  const names = new Set()
+  for (const row of summaryRows.value) {
+    for (const source of Object.keys(row.diffs || {})) names.add(source)
+  }
+  return Array.from(names)
 })
 
 const filteredSummaryRows = computed(() => {
   return summaryRows.value.filter((row) => {
-    const periodOk = !filters.period || row.period.includes(filters.period)
-    const metricOk = !filters.metric || row.metric.includes(filters.metric)
-    const statusOk = !filters.status || row.status === filters.status
-    return periodOk && metricOk && statusOk
+    return (!filters.period || row.period.includes(filters.period))
+      && (!filters.metric || row.metric.includes(filters.metric))
+      && (!filters.status || row.status === filters.status)
   })
 })
 
@@ -387,34 +393,129 @@ async function refreshRules() {
   if (!runForm.rule_id && rules.value.length > 0) runForm.rule_id = rules.value[0].id
 }
 
+function hydrateSource(source) {
+  const hydrated = {
+    ...source,
+    request_config: source.request_config || {},
+    request_config_text: source.type === 'erp' ? JSON.stringify(forceUsd(source.request_config || defaultRequestConfig()), null, 2) : '',
+    metrics: source.metrics?.length ? source.metrics : [emptyMetric()],
+  }
+  return hydrated
+}
+
+function normalizeRule(rule) {
+  if (rule.sources?.length) {
+    return {
+      name: rule.name,
+      sources: rule.sources.map(hydrateSource),
+      comparison_base_source: rule.comparison_base_source || rule.sources[0].name,
+    }
+  }
+  return {
+    name: rule.name,
+    comparison_base_source: '数仓',
+    sources: [
+      hydrateSource({
+        name: '数仓',
+        type: 'warehouse',
+        table_or_path: rule.warehouse_table,
+        date_field: rule.warehouse_date_field,
+        store_field: rule.warehouse_store_field,
+        period_mode: 'response_field',
+        metrics: rule.metrics,
+      }),
+      hydrateSource({
+        name: 'ERP',
+        type: 'erp',
+        table_or_path: rule.erp_module_path,
+        date_field: rule.erp_date_field,
+        store_field: rule.erp_store_field,
+        period_mode: 'response_field',
+        request_config: rule.erp_request_config,
+        metrics: rule.metrics,
+      }),
+    ],
+  }
+}
+
 function resetRuleForm() {
   Object.assign(ruleForm, emptyRule())
-  erpRequestConfigText.value = JSON.stringify(ruleForm.erp_request_config, null, 2)
   editingRuleId.value = null
 }
 
 function editRule(rule) {
-  Object.assign(ruleForm, JSON.parse(JSON.stringify(rule)))
-  if (!ruleForm.erp_request_config || Object.keys(ruleForm.erp_request_config).length === 0) {
-    ruleForm.erp_request_config = defaultRequestConfig()
-  }
-  erpRequestConfigText.value = JSON.stringify(ruleForm.erp_request_config, null, 2)
+  Object.assign(ruleForm, normalizeRule(rule))
   editingRuleId.value = rule.id
+  syncBaseSource()
 }
 
-function addMetric() {
-  ruleForm.metrics.push(emptyMetric())
+function addSource(type) {
+  const source = emptySource(type)
+  let index = 1
+  const baseName = source.name
+  while (ruleForm.sources.some((item) => item.name === source.name)) {
+    index += 1
+    source.name = `${baseName}${index}`
+  }
+  ruleForm.sources.push(source)
+  syncBaseSource()
 }
 
-function removeMetric(index) {
-  ruleForm.metrics.splice(index, 1)
+function removeSource(index) {
+  ruleForm.sources.splice(index, 1)
+  syncBaseSource()
+}
+
+function addMetric(source) {
+  source.metrics.push(emptyMetric())
+}
+
+function removeMetric(source, index) {
+  source.metrics.splice(index, 1)
+}
+
+function syncBaseSource() {
+  if (!ruleForm.sources.some((source) => source.name === ruleForm.comparison_base_source)) {
+    ruleForm.comparison_base_source = ruleForm.sources[0]?.name || ''
+  }
+}
+
+function forceUsd(config) {
+  const next = JSON.parse(JSON.stringify(config || {}))
+  next.extraParams = { ...(next.extraParams || {}), currencyCode: 'USD' }
+  return next
+}
+
+function payloadFromForm() {
+  const sources = ruleForm.sources.map((source) => {
+    const requestConfig = source.type === 'erp' ? forceUsd(JSON.parse(source.request_config_text || '{}')) : {}
+    return {
+      name: source.name,
+      type: source.type,
+      table_or_path: source.table_or_path,
+      date_field: source.period_mode === 'request_month' ? (source.date_field || '') : source.date_field,
+      store_field: source.store_field,
+      period_mode: source.type === 'erp' ? source.period_mode : 'response_field',
+      request_config: requestConfig,
+      metrics: source.metrics.map((metric) => ({
+        name: metric.name,
+        warehouse_expression: source.type === 'warehouse' ? metric.warehouse_expression : (metric.warehouse_expression || '*'),
+        erp_field: source.type === 'erp' ? metric.erp_field : (metric.erp_field || metric.name),
+        aggregation: metric.aggregation,
+        tolerance: metric.tolerance || 0,
+      })),
+    }
+  })
+  return {
+    name: ruleForm.name,
+    sources,
+    comparison_base_source: ruleForm.comparison_base_source || sources[0]?.name || '',
+  }
 }
 
 async function saveRule() {
   try {
-    const requestConfig = JSON.parse(erpRequestConfigText.value)
-    const payload = JSON.parse(JSON.stringify(ruleForm))
-    payload.erp_request_config = requestConfig
+    const payload = payloadFromForm()
     if (editingRuleId.value) {
       await updateRule(editingRuleId.value, payload)
       notify('规则已更新', 'success')
@@ -459,21 +560,34 @@ function toggleExpand(key) {
   expandedKey.value = expandedKey.value === key ? '' : key
 }
 
+function detailRows(summary) {
+  const rows = (currentRun.value?.rows || []).filter((row) => row.period === summary.period && row.metric === summary.metric)
+  const baseSource = currentRuleBaseSource()
+  const groups = new Map()
+  for (const row of rows) {
+    if (!groups.has(row.store)) groups.set(row.store, { store: row.store, values: {}, diffs: {} })
+    groups.get(row.store).values[row.source] = Number(row.value || 0)
+  }
+  for (const group of groups.values()) {
+    const baseValue = group.values[baseSource] || 0
+    for (const source of diffSources.value) {
+      group.diffs[source] = baseValue - (group.values[source] || 0)
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => String(a.store).localeCompare(String(b.store), 'zh-CN'))
+}
+
+function currentRuleBaseSource() {
+  const rule = rules.value.find((item) => item.id === currentRun.value?.rule_id)
+  return rule?.comparison_base_source || resultSources.value[0] || ''
+}
+
 function formatNumber(value) {
   return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
 }
 
-function formatRate(value) {
-  if (value === null || value === undefined) return '-'
-  return `${(Number(value) * 100).toFixed(2)}%`
-}
-
 function statusLabel(status) {
-  return {
-    matched: '一致',
-    minor_diff: '轻微差异',
-    major_diff: '异常差异',
-  }[status] || status
+  return { matched: '一致', minor_diff: '轻微差异', major_diff: '异常差异' }[status] || status
 }
 
 onMounted(async () => {

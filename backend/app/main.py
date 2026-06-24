@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.exporter import build_run_excel
-from app.reconcile import build_reconcile_rows
+from app.reconcile import build_reconcile_result
 from app.schemas import HealthResponse, ReconcileRun, Rule, RuleCreate, RuleUpdate, RunRequest
 from app.storage import create_rule, delete_rule, get_rule, get_run, init_db, list_rules, save_run, update_rule
 from app.validation import validate_rule_payload
@@ -78,7 +78,7 @@ def api_run_reconcile(payload: RunRequest) -> ReconcileRun:
     if not rule:
         raise HTTPException(status_code=404, detail="rule not found")
     try:
-        rows = build_reconcile_rows(
+        rows, summary_rows = build_reconcile_result(
             rule,
             payload.start_date.isoformat(),
             payload.end_date.isoformat(),
@@ -91,6 +91,7 @@ def api_run_reconcile(payload: RunRequest) -> ReconcileRun:
             end_date=payload.end_date,
             granularity=payload.granularity,
             rows=rows,
+            summary_rows=summary_rows,
         )
     except Exception as exc:
         run = save_run(

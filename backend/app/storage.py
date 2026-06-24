@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from app.config import get_settings
-from app.schemas import ReconcileRow, ReconcileRun, Rule, RuleCreate, RuleUpdate
+from app.schemas import ReconcileRow, ReconcileRun, Rule, RuleCreate, RuleUpdate, Source
 
 
 def _model_json_dict(model):
@@ -49,6 +49,8 @@ def init_db() -> None:
                 erp_store_field TEXT NOT NULL,
                 erp_request_config_json TEXT NOT NULL DEFAULT '{}',
                 metrics_json TEXT NOT NULL,
+                sources_json TEXT NOT NULL DEFAULT '[]',
+                comparison_base_source TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -65,6 +67,7 @@ def init_db() -> None:
                 granularity TEXT NOT NULL,
                 status TEXT NOT NULL,
                 rows_json TEXT NOT NULL,
+                summary_rows_json TEXT NOT NULL DEFAULT '[]',
                 error_message TEXT,
                 created_at TEXT NOT NULL
             )
@@ -73,12 +76,97 @@ def init_db() -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(rules)").fetchall()}
         if "erp_request_config_json" not in columns:
             conn.execute("ALTER TABLE rules ADD COLUMN erp_request_config_json TEXT NOT NULL DEFAULT '{}'")
+        if "sources_json" not in columns:
+            conn.execute("ALTER TABLE rules ADD COLUMN sources_json TEXT NOT NULL DEFAULT '[]'")
+        if "comparison_base_source" not in columns:
+            conn.execute("ALTER TABLE rules ADD COLUMN comparison_base_source TEXT NOT NULL DEFAULT ''")
+        run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(reconcile_runs)").fetchall()}
+        if "summary_rows_json" not in run_columns:
+            conn.execute("ALTER TABLE reconcile_runs ADD COLUMN summary_rows_json TEXT NOT NULL DEFAULT '[]'")
+
+
+def _legacy_sources(data: dict) -> list[dict]:
+    metrics = json.loads(data.get("metrics_json") or "[]")
+    sources: list[dict] = []
+    if data.get("warehouse_table"):
+        sources.append(
+            {
+                "name": "数仓",
+                "type": "warehouse",
+                "table_or_path": data["warehouse_table"],
+                "date_field": data.get("warehouse_date_field") or "",
+                "store_field": data.get("warehouse_store_field") or "",
+                "period_mode": "response_field",
+                "request_config": {},
+                "metrics": metrics,
+            }
+        )
+    if data.get("erp_module_path"):
+        sources.append(
+            {
+                "name": "ERP",
+                "type": "erp",
+                "table_or_path": data["erp_module_path"],
+                "date_field": data.get("erp_date_field") or "",
+                "store_field": data.get("erp_store_field") or "",
+                "period_mode": "response_field",
+                "request_config": json.loads(data.get("erp_request_config_json") or "{}"),
+                "metrics": metrics,
+            }
+        )
+    return sources
+
+
+def _normalize_sources(payload: RuleCreate | RuleUpdate) -> list[Source]:
+    if payload.sources:
+        return payload.sources
+    metrics = payload.metrics
+    sources: list[Source] = []
+    if payload.warehouse_table:
+        sources.append(
+            Source(
+                name="数仓",
+                type="warehouse",
+                table_or_path=payload.warehouse_table,
+                date_field=payload.warehouse_date_field,
+                store_field=payload.warehouse_store_field,
+                metrics=metrics,
+            )
+        )
+    if payload.erp_module_path:
+        sources.append(
+            Source(
+                name="ERP",
+                type="erp",
+                table_or_path=payload.erp_module_path,
+                date_field=payload.erp_date_field,
+                store_field=payload.erp_store_field,
+                request_config=payload.erp_request_config,
+                metrics=metrics,
+            )
+        )
+    return sources
+
+
+def _legacy_columns(payload: RuleCreate | RuleUpdate, sources: list[Source]) -> tuple[str, str, str, str, str, str]:
+    warehouse = next((source for source in sources if source.type == "warehouse"), None)
+    erp = next((source for source in sources if source.type == "erp"), None)
+    return (
+        payload.warehouse_table or (warehouse.table_or_path if warehouse else ""),
+        payload.warehouse_date_field or (warehouse.date_field if warehouse else ""),
+        payload.warehouse_store_field or (warehouse.store_field if warehouse else ""),
+        payload.erp_module_path or (erp.table_or_path if erp else ""),
+        payload.erp_date_field or (erp.date_field if erp else ""),
+        payload.erp_store_field or (erp.store_field if erp else ""),
+    )
 
 
 def _rule_from_row(row: sqlite3.Row) -> Rule:
     data = dict(row)
     data["metrics"] = json.loads(data.pop("metrics_json"))
     data["erp_request_config"] = json.loads(data.pop("erp_request_config_json", "{}") or "{}")
+    sources = json.loads(data.pop("sources_json", "[]") or "[]")
+    data["sources"] = sources or _legacy_sources(dict(row))
     return Rule.parse_obj(data)
 
 
@@ -96,28 +184,35 @@ def get_rule(rule_id: int) -> Optional[Rule]:
 
 def create_rule(payload: RuleCreate) -> Rule:
     now = datetime.now().isoformat()
-    metrics_json = json.dumps([_model_json_dict(m) for m in payload.metrics], ensure_ascii=False)
+    sources = _normalize_sources(payload)
+    metrics = payload.metrics or (sources[0].metrics if sources else [])
+    metrics_json = json.dumps([_model_json_dict(m) for m in metrics], ensure_ascii=False)
+    sources_json = json.dumps([_model_json_dict(source) for source in sources], ensure_ascii=False)
     request_config_json = json.dumps(payload.erp_request_config, ensure_ascii=False)
+    legacy = _legacy_columns(payload, sources)
+    comparison_base_source = payload.comparison_base_source or (sources[0].name if sources else "")
     with connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO rules (
                 name, warehouse_table, warehouse_date_field, warehouse_store_field,
                 erp_module_path, erp_date_field, erp_store_field, erp_request_config_json, metrics_json,
-                created_at, updated_at
+                sources_json, comparison_base_source, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.name,
-                payload.warehouse_table,
-                payload.warehouse_date_field,
-                payload.warehouse_store_field,
-                payload.erp_module_path,
-                payload.erp_date_field,
-                payload.erp_store_field,
+                legacy[0],
+                legacy[1],
+                legacy[2],
+                legacy[3],
+                legacy[4],
+                legacy[5],
                 request_config_json,
                 metrics_json,
+                sources_json,
+                comparison_base_source,
                 now,
                 now,
             ),
@@ -130,28 +225,35 @@ def create_rule(payload: RuleCreate) -> Rule:
 
 def update_rule(rule_id: int, payload: RuleUpdate) -> Optional[Rule]:
     now = datetime.now().isoformat()
-    metrics_json = json.dumps([_model_json_dict(m) for m in payload.metrics], ensure_ascii=False)
+    sources = _normalize_sources(payload)
+    metrics = payload.metrics or (sources[0].metrics if sources else [])
+    metrics_json = json.dumps([_model_json_dict(m) for m in metrics], ensure_ascii=False)
+    sources_json = json.dumps([_model_json_dict(source) for source in sources], ensure_ascii=False)
     request_config_json = json.dumps(payload.erp_request_config, ensure_ascii=False)
+    legacy = _legacy_columns(payload, sources)
+    comparison_base_source = payload.comparison_base_source or (sources[0].name if sources else "")
     with connect() as conn:
         cursor = conn.execute(
             """
             UPDATE rules
             SET name = ?, warehouse_table = ?, warehouse_date_field = ?, warehouse_store_field = ?,
                 erp_module_path = ?, erp_date_field = ?, erp_store_field = ?,
-                erp_request_config_json = ?, metrics_json = ?,
+                erp_request_config_json = ?, metrics_json = ?, sources_json = ?, comparison_base_source = ?,
                 updated_at = ?
             WHERE id = ?
             """,
             (
                 payload.name,
-                payload.warehouse_table,
-                payload.warehouse_date_field,
-                payload.warehouse_store_field,
-                payload.erp_module_path,
-                payload.erp_date_field,
-                payload.erp_store_field,
+                legacy[0],
+                legacy[1],
+                legacy[2],
+                legacy[3],
+                legacy[4],
+                legacy[5],
                 request_config_json,
                 metrics_json,
+                sources_json,
+                comparison_base_source,
                 now,
                 rule_id,
             ),
@@ -176,18 +278,20 @@ def save_run(
     granularity: str,
     rows: list[ReconcileRow],
     status: str = "success",
+    summary_rows: Optional[list] = None,
     error_message: Optional[str] = None,
 ) -> ReconcileRun:
     now = datetime.now().isoformat()
     rows_json = json.dumps([_model_json_dict(row) for row in rows], ensure_ascii=False)
+    summary_rows_json = json.dumps([_model_json_dict(row) for row in summary_rows or []], ensure_ascii=False)
     with connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO reconcile_runs (
                 rule_id, rule_name, start_date, end_date, granularity, status,
-                rows_json, error_message, created_at
+                rows_json, summary_rows_json, error_message, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 rule_id,
@@ -197,6 +301,7 @@ def save_run(
                 granularity,
                 status,
                 rows_json,
+                summary_rows_json,
                 error_message,
                 now,
             ),
@@ -214,4 +319,5 @@ def get_run(run_id: int) -> Optional[ReconcileRun]:
         return None
     data = dict(row)
     data["rows"] = json.loads(data.pop("rows_json"))
+    data["summary_rows"] = json.loads(data.pop("summary_rows_json", "[]") or "[]")
     return ReconcileRun.parse_obj(data)

@@ -180,6 +180,24 @@ def test_auth_error_refreshes_token_and_retries_once(monkeypatch) -> None:
     assert "access_token=new-token" in used_tokens[1]
 
 
+def test_erp_window_forces_usd_currency(monkeypatch) -> None:
+    captured_payloads = []
+
+    client = LingxingApiClient()
+    client._post_json = lambda url, payload: captured_payloads.append(payload) or {"code": "0", "data": {"list": []}}
+
+    client._fetch_window_records(
+        "https://openapi.lingxing.com/example/path",
+        {"extraParams": {"currencyCode": "CNY"}, "pageParam": "page", "pageSizeParam": "pageSize"},
+        "2026-01-01",
+        "2026-01-31",
+        "month",
+        200,
+    )
+
+    assert captured_payloads[0]["currencyCode"] == "USD"
+
+
 def test_token_error_does_not_expose_secret(monkeypatch) -> None:
     def fake_urlopen(request, timeout):
         return FakeResponse(

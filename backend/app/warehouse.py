@@ -9,7 +9,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from app.config import get_settings
-from app.schemas import Granularity, Rule
+from app.schemas import Granularity, Rule, Source
 
 
 def _quote_identifier(identifier: str) -> str:
@@ -66,14 +66,14 @@ def _warehouse_connection() -> Iterator[pymysql.connections.Connection]:
             tunnel.stop()
 
 
-def fetch_warehouse_aggregate(
-    rule: Rule,
+def fetch_warehouse_source_values(
+    source: Source,
     start_date: str,
     end_date: str,
     granularity: Granularity,
-) -> dict[tuple[str, str, str], Decimal]:
+) -> dict[tuple[str, str, str, str], Decimal]:
     metric_selects: list[str] = []
-    for index, metric in enumerate(rule.metrics):
+    for index, metric in enumerate(source.metrics):
         alias = f"metric_{index}"
         if metric.aggregation == "count":
             expression = "*" if metric.warehouse_expression.strip() == "*" else metric.warehouse_expression
@@ -81,10 +81,10 @@ def fetch_warehouse_aggregate(
         else:
             metric_selects.append(f"COALESCE(SUM({metric.warehouse_expression}), 0) AS `{alias}`")
 
-    period_expr = _period_sql(rule.warehouse_date_field, granularity)
-    table_name = _quote_identifier(rule.warehouse_table)
-    date_field = _quote_identifier(rule.warehouse_date_field)
-    store_field = _quote_identifier(rule.warehouse_store_field)
+    period_expr = _period_sql(source.date_field, granularity)
+    table_name = _quote_identifier(source.table_or_path)
+    date_field = _quote_identifier(source.date_field)
+    store_field = _quote_identifier(source.store_field)
     sql = f"""
         SELECT
             {period_expr} AS period,
@@ -101,11 +101,29 @@ def fetch_warehouse_aggregate(
             cursor.execute(sql, (start_date, end_date))
             rows: list[dict[str, Any]] = cursor.fetchall()
 
-    result: dict[tuple[str, str, str], Decimal] = {}
+    result: dict[tuple[str, str, str, str], Decimal] = {}
     for row in rows:
         period = str(row["period"])
         store = str(row["store"] or "")
-        for index, metric in enumerate(rule.metrics):
+        for index, metric in enumerate(source.metrics):
             value = row.get(f"metric_{index}") or 0
-            result[(period, store, metric.name)] = Decimal(str(value))
+            result[(period, store, metric.name, source.name)] = Decimal(str(value))
     return result
+
+
+def fetch_warehouse_aggregate(
+    rule: Rule,
+    start_date: str,
+    end_date: str,
+    granularity: Granularity,
+) -> dict[tuple[str, str, str], Decimal]:
+    source = Source(
+        name="数仓",
+        type="warehouse",
+        table_or_path=rule.warehouse_table,
+        date_field=rule.warehouse_date_field,
+        store_field=rule.warehouse_store_field,
+        metrics=rule.metrics,
+    )
+    values = fetch_warehouse_source_values(source, start_date, end_date, granularity)
+    return {(period, store, metric): value for (period, store, metric, _source), value in values.items()}

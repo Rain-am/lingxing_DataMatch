@@ -8,12 +8,13 @@ import time
 import urllib.error
 import urllib.request
 from datetime import date, datetime
+from calendar import monthrange
 from decimal import Decimal
 from typing import Any, Optional
 from urllib.parse import urlencode, urlsplit
 
 from app.config import Settings, get_settings, update_env_values
-from app.schemas import Granularity, Rule
+from app.schemas import Granularity, Rule, Source
 
 
 def _extract_items(payload: Any) -> list[dict[str, Any]]:
@@ -78,6 +79,25 @@ def _date_for_request(value: str, granularity: Granularity) -> str:
     if granularity == "month":
         return value[:7]
     return value
+
+
+def _month_windows(start_date: str, end_date: str) -> list[tuple[str, str, str]]:
+    start = datetime.strptime(start_date[:10], "%Y-%m-%d").date()
+    end = datetime.strptime(end_date[:10], "%Y-%m-%d").date()
+    current = start.replace(day=1)
+    windows: list[tuple[str, str, str]] = []
+    while current <= end:
+        last_day = monthrange(current.year, current.month)[1]
+        month_start = current
+        month_end = current.replace(day=last_day)
+        clipped_start = max(start, month_start)
+        clipped_end = min(end, month_end)
+        windows.append((current.strftime("%Y-%m-01"), clipped_start.isoformat(), clipped_end.isoformat()))
+        if current.month == 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + 1)
+    return windows
 
 
 def _sign_value(value: Any) -> str:
@@ -295,38 +315,91 @@ class LingxingApiClient:
         granularity: Granularity,
         page_size: int = 200,
     ) -> list[dict[str, Any]]:
+        source = Source(
+            name="ERP",
+            type="erp",
+            table_or_path=rule.erp_module_path,
+            date_field=rule.erp_date_field,
+            store_field=rule.erp_store_field,
+            request_config=rule.erp_request_config,
+            metrics=rule.metrics,
+        )
+        return self.fetch_source_records(source, start_date, end_date, granularity, page_size)
+
+    def fetch_source_records(
+        self,
+        source: Source,
+        start_date: str,
+        end_date: str,
+        granularity: Granularity,
+        page_size: int = 200,
+    ) -> list[dict[str, Any]]:
         if not self.settings.lingxing_api_base_url:
             raise RuntimeError("LINGXING_API_BASE_URL is not configured")
 
         base = self.settings.lingxing_api_base_url.rstrip("/")
-        path = rule.erp_module_path if rule.erp_module_path.startswith("/") else f"/{rule.erp_module_path}"
+        path = source.table_or_path if source.table_or_path.startswith("/") else f"/{source.table_or_path}"
         url = f"{base}{path}"
         records: list[dict[str, Any]] = []
-        page = 1
-        config = rule.erp_request_config or {}
+        config = source.request_config or {}
+        windows = (
+            _month_windows(start_date, end_date)
+            if source.period_mode == "request_month"
+            else [("", start_date, end_date)]
+        )
+        for request_period, window_start, window_end in windows:
+            records.extend(self._fetch_window_records(url, config, window_start, window_end, granularity, page_size, request_period))
+        return records
+
+    def _fetch_window_records(
+        self,
+        url: str,
+        config: dict[str, Any],
+        start_date: str,
+        end_date: str,
+        granularity: Granularity,
+        page_size: int,
+        request_period: str = "",
+    ) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
         extra_params = config.get("extraParams") or {}
         if not isinstance(extra_params, dict):
             raise RuntimeError("ERP extraParams must be a JSON object")
+        extra_params = dict(extra_params)
+        extra_params["currencyCode"] = "USD"
         start_param = str(config.get("startDateParam") or "startDate")
         end_param = str(config.get("endDateParam") or "endDate")
         page_param = str(config.get("pageParam") or "page")
         page_size_param = str(config.get("pageSizeParam") or "pageSize")
+        offset_param = str(config.get("offsetParam") or "")
+        length_param = str(config.get("lengthParam") or "")
         monthly_param = str(config.get("monthlyQueryParam") or "monthlyQuery")
+        pagination_mode = str(config.get("paginationMode") or ("offset" if offset_param or length_param else "page"))
+        page = 1
+        offset = int(config.get("offsetStart") or 0)
 
         while True:
             payload = dict(extra_params)
-            payload[start_param] = _date_for_request(start_date, granularity)
-            payload[end_param] = _date_for_request(end_date, granularity)
-            payload[page_param] = page
-            payload[page_size_param] = page_size
+            payload[start_param] = start_date if request_period else _date_for_request(start_date, granularity)
+            payload[end_param] = end_date if request_period else _date_for_request(end_date, granularity)
+            if pagination_mode == "offset":
+                payload[offset_param or "offset"] = offset
+                payload[length_param or "length"] = page_size
+            else:
+                payload[page_param] = page
+                payload[page_size_param] = page_size
             if monthly_param:
                 payload[monthly_param] = granularity == "month"
             response = self._post_json(url, payload)
             items = _extract_items(response)
+            if request_period:
+                for item in items:
+                    item["_request_period"] = request_period
             records.extend(items)
             if not _has_next(response, page, page_size, len(items)):
                 break
             page += 1
+            offset += page_size
         return records
 
     def _post_json(self, url: str, payload: dict[str, Any]) -> Any:
@@ -411,6 +484,32 @@ def fetch_erp_aggregate(
         store = str(record.get(rule.erp_store_field) or "")
         for metric in rule.metrics:
             key = (period, store, metric.name)
+            if metric.aggregation == "count":
+                value = Decimal("1")
+            else:
+                value = _decimal(record.get(metric.erp_field))
+            result[key] = result.get(key, Decimal("0")) + value
+    return result
+
+
+def fetch_erp_source_values(
+    source: Source,
+    start_date: str,
+    end_date: str,
+    granularity: Granularity,
+    client: Optional[LingxingApiClient] = None,
+) -> dict[tuple[str, str, str, str], Decimal]:
+    api = client or LingxingApiClient()
+    records = api.fetch_source_records(source, start_date, end_date, granularity)
+    result: dict[tuple[str, str, str, str], Decimal] = {}
+    for record in records:
+        if source.period_mode == "request_month":
+            period = str(record.get("_request_period") or "")
+        else:
+            period = _period(record.get(source.date_field), granularity)
+        store = str(record.get(source.store_field) or "")
+        for metric in source.metrics:
+            key = (period, store, metric.name, source.name)
             if metric.aggregation == "count":
                 value = Decimal("1")
             else:
