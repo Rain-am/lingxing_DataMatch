@@ -34,16 +34,16 @@ See `deploy/DEPLOY.md`.
 Recommended service port:
 
 ```text
-127.0.0.1:18080
+127.0.0.1:18081
 ```
 
 Recommended access method:
 
 ```bash
-ssh -L 18080:127.0.0.1:18080 root@YOUR_SERVER_IP
+ssh -L 18081:127.0.0.1:18081 root@YOUR_SERVER_IP
 ```
 
-Then open `http://127.0.0.1:18080/`.
+Then open `http://127.0.0.1:18081/`.
 
 ## Security Notes
 
