@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -102,7 +103,7 @@ def api_run_reconcile(payload: RunRequest) -> ReconcileRun:
             status="failed",
             error_message=str(exc),
         )
-        raise HTTPException(status_code=500, detail={"message": "reconcile failed", "run": run.model_dump(mode="json")})
+        raise HTTPException(status_code=500, detail={"message": "reconcile failed", "run": jsonable_encoder(run)})
 
 
 @app.get("/api/reconcile/runs/{run_id}", response_model=ReconcileRun)

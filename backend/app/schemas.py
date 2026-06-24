@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, validator
 
 
 Aggregation = Literal["sum", "count"]
@@ -17,8 +17,7 @@ class Metric(BaseModel):
     aggregation: Aggregation = "sum"
     tolerance: Decimal = Decimal("0")
 
-    @field_validator("tolerance")
-    @classmethod
+    @validator("tolerance")
     def tolerance_must_be_positive(cls, value: Decimal) -> Decimal:
         if value < 0:
             raise ValueError("tolerance must be greater than or equal to 0")
@@ -57,10 +56,9 @@ class RunRequest(BaseModel):
     end_date: date
     granularity: Granularity = "day"
 
-    @field_validator("end_date")
-    @classmethod
-    def end_must_not_precede_start(cls, value: date, info: Any) -> date:
-        start_date = info.data.get("start_date")
+    @validator("end_date")
+    def end_must_not_precede_start(cls, value: date, values: Any) -> date:
+        start_date = values.get("start_date")
         if start_date and value < start_date:
             raise ValueError("end_date must be greater than or equal to start_date")
         return value

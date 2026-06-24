@@ -11,6 +11,10 @@ from app.config import get_settings
 from app.schemas import ReconcileRow, ReconcileRun, Rule, RuleCreate, RuleUpdate
 
 
+def _model_json_dict(model):
+    return json.loads(model.json())
+
+
 def _db_path() -> Path:
     path = Path(get_settings().sqlite_path)
     if not path.is_absolute():
@@ -75,7 +79,7 @@ def _rule_from_row(row: sqlite3.Row) -> Rule:
     data = dict(row)
     data["metrics"] = json.loads(data.pop("metrics_json"))
     data["erp_request_config"] = json.loads(data.pop("erp_request_config_json", "{}") or "{}")
-    return Rule.model_validate(data)
+    return Rule.parse_obj(data)
 
 
 def list_rules() -> list[Rule]:
@@ -92,7 +96,7 @@ def get_rule(rule_id: int) -> Optional[Rule]:
 
 def create_rule(payload: RuleCreate) -> Rule:
     now = datetime.now().isoformat()
-    metrics_json = json.dumps([m.model_dump(mode="json") for m in payload.metrics], ensure_ascii=False)
+    metrics_json = json.dumps([_model_json_dict(m) for m in payload.metrics], ensure_ascii=False)
     request_config_json = json.dumps(payload.erp_request_config, ensure_ascii=False)
     with connect() as conn:
         cursor = conn.execute(
@@ -126,7 +130,7 @@ def create_rule(payload: RuleCreate) -> Rule:
 
 def update_rule(rule_id: int, payload: RuleUpdate) -> Optional[Rule]:
     now = datetime.now().isoformat()
-    metrics_json = json.dumps([m.model_dump(mode="json") for m in payload.metrics], ensure_ascii=False)
+    metrics_json = json.dumps([_model_json_dict(m) for m in payload.metrics], ensure_ascii=False)
     request_config_json = json.dumps(payload.erp_request_config, ensure_ascii=False)
     with connect() as conn:
         cursor = conn.execute(
@@ -175,7 +179,7 @@ def save_run(
     error_message: Optional[str] = None,
 ) -> ReconcileRun:
     now = datetime.now().isoformat()
-    rows_json = json.dumps([row.model_dump(mode="json") for row in rows], ensure_ascii=False)
+    rows_json = json.dumps([_model_json_dict(row) for row in rows], ensure_ascii=False)
     with connect() as conn:
         cursor = conn.execute(
             """
@@ -210,4 +214,4 @@ def get_run(run_id: int) -> Optional[ReconcileRun]:
         return None
     data = dict(row)
     data["rows"] = json.loads(data.pop("rows_json"))
-    return ReconcileRun.model_validate(data)
+    return ReconcileRun.parse_obj(data)
