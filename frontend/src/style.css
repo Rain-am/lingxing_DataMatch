@@ -1,0 +1,323 @@
+:root {
+  color: #1f2933;
+  background: #f5f7f8;
+  font-family: Inter, "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  font-size: 15px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+.button-link {
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 14px;
+  color: #fff;
+  background: #2454a6;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  color: #2454a6;
+  background: #e8eef8;
+}
+
+button.danger,
+.icon-button.danger {
+  color: #8f1d1d;
+  background: #f8e4e4;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 32px;
+  padding: 28px 20px;
+  color: #eef5ff;
+  background: #18385f;
+}
+
+.sidebar h1 {
+  margin: 0 0 10px;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.sidebar p {
+  margin: 0;
+  color: #bfd3e6;
+  line-height: 1.6;
+}
+
+nav {
+  display: grid;
+  gap: 10px;
+}
+
+nav button {
+  justify-content: flex-start;
+  width: 100%;
+  color: #d9e7f5;
+  background: transparent;
+}
+
+nav button.active {
+  color: #18385f;
+  background: #ffffff;
+}
+
+.workspace {
+  padding: 28px;
+}
+
+.message {
+  margin-bottom: 16px;
+  border-radius: 6px;
+  padding: 12px 14px;
+  background: #e8eef8;
+}
+
+.message.success {
+  background: #dcefe4;
+}
+
+.message.error {
+  color: #7d1d1d;
+  background: #f7dddd;
+}
+
+.panel {
+  border: 1px solid #d9e1e8;
+  border-radius: 8px;
+  padding: 22px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(31, 41, 51, 0.06);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.panel-header h2,
+.rule-list h3,
+.metrics-header h3 {
+  margin: 0;
+}
+
+.layout-two {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
+  gap: 22px;
+}
+
+.form-grid,
+.run-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  color: #52616f;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid #c9d3dd;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: #1f2933;
+  background: #fff;
+}
+
+input,
+select {
+  min-height: 38px;
+}
+
+textarea {
+  min-height: 150px;
+  resize: vertical;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  line-height: 1.5;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.metrics-editor {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.metrics-header,
+.actions,
+.card-actions,
+.result-meta,
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.metrics-header {
+  justify-content: space-between;
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1.1fr 90px 90px 48px;
+  gap: 8px;
+}
+
+.icon-button {
+  padding: 0 8px;
+}
+
+.rule-list {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.rule-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d9e1e8;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.rule-card strong,
+.rule-card span {
+  display: block;
+}
+
+.rule-card span {
+  margin-top: 5px;
+  color: #697987;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  color: #697987;
+}
+
+.run-form {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  align-items: end;
+}
+
+.result-meta {
+  margin-bottom: 14px;
+  color: #52616f;
+}
+
+.filters {
+  margin-bottom: 14px;
+}
+
+.filters input,
+.filters select {
+  max-width: 220px;
+}
+
+.table-wrap {
+  overflow: auto;
+  border: 1px solid #d9e1e8;
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 860px;
+}
+
+th,
+td {
+  border-bottom: 1px solid #e7edf2;
+  padding: 10px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: #52616f;
+  background: #f5f7f8;
+}
+
+tr.matched td {
+  background: #f2faf5;
+}
+
+tr.minor_diff td {
+  background: #fff8df;
+}
+
+tr.major_diff td {
+  background: #fff0f0;
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    padding: 20px;
+  }
+
+  .layout-two,
+  .form-grid,
+  .run-form {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-row {
+    grid-template-columns: 1fr;
+  }
+}

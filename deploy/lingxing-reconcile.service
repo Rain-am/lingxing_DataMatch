@@ -1,0 +1,15 @@
+[Unit]
+Description=Lingxing Data Match reconciliation service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/lingxing-reconcile/backend
+Environment=PYTHONPATH=/opt/lingxing-reconcile/backend
+ExecStart=/opt/lingxing-reconcile/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 18080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
