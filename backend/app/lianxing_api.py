@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlencode
 
 from app.config import get_settings
@@ -184,7 +184,7 @@ class LingxingApiClient:
         signed_url = f"{url}?{urlencode(query_params)}"
 
         request = urllib.request.Request(signed_url, data=body, headers=headers, method="POST")
-        last_error: Exception | None = None
+        last_error: Optional[Exception] = None
         for attempt in range(3):
             try:
                 with urllib.request.urlopen(request, timeout=self.settings.lingxing_timeout_seconds) as response:
@@ -206,7 +206,7 @@ def fetch_erp_aggregate(
     start_date: str,
     end_date: str,
     granularity: Granularity,
-    client: LingxingApiClient | None = None,
+    client: Optional[LingxingApiClient] = None,
 ) -> dict[tuple[str, str, str], Decimal]:
     api = client or LingxingApiClient()
     records = api.fetch_module_records(rule, start_date, end_date, granularity)

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -73,7 +73,7 @@ class ReconcileRow(BaseModel):
     warehouse_value: Decimal
     erp_value: Decimal
     diff_value: Decimal
-    diff_rate: Decimal | None
+    diff_rate: Optional[Decimal]
     tolerance: Decimal
     status: ReconcileStatus
 
@@ -87,7 +87,7 @@ class ReconcileRun(BaseModel):
     granularity: Granularity
     status: str
     rows: list[ReconcileRow]
-    error_message: str | None = None
+    error_message: Optional[str] = None
     created_at: datetime
 
 

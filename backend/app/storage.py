@@ -5,7 +5,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 from app.config import get_settings
 from app.schemas import ReconcileRow, ReconcileRun, Rule, RuleCreate, RuleUpdate
@@ -84,7 +84,7 @@ def list_rules() -> list[Rule]:
     return [_rule_from_row(row) for row in rows]
 
 
-def get_rule(rule_id: int) -> Rule | None:
+def get_rule(rule_id: int) -> Optional[Rule]:
     with connect() as conn:
         row = conn.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
     return _rule_from_row(row) if row else None
@@ -124,7 +124,7 @@ def create_rule(payload: RuleCreate) -> Rule:
     return rule
 
 
-def update_rule(rule_id: int, payload: RuleUpdate) -> Rule | None:
+def update_rule(rule_id: int, payload: RuleUpdate) -> Optional[Rule]:
     now = datetime.now().isoformat()
     metrics_json = json.dumps([m.model_dump(mode="json") for m in payload.metrics], ensure_ascii=False)
     request_config_json = json.dumps(payload.erp_request_config, ensure_ascii=False)
@@ -172,7 +172,7 @@ def save_run(
     granularity: str,
     rows: list[ReconcileRow],
     status: str = "success",
-    error_message: str | None = None,
+    error_message: Optional[str] = None,
 ) -> ReconcileRun:
     now = datetime.now().isoformat()
     rows_json = json.dumps([row.model_dump(mode="json") for row in rows], ensure_ascii=False)
@@ -203,7 +203,7 @@ def save_run(
     return run
 
 
-def get_run(run_id: int) -> ReconcileRun | None:
+def get_run(run_id: int) -> Optional[ReconcileRun]:
     with connect() as conn:
         row = conn.execute("SELECT * FROM reconcile_runs WHERE id = ?", (run_id,)).fetchone()
     if not row:

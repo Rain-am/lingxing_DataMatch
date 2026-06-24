@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
+from typing import Optional
 
 from app.schemas import Granularity, ReconcileRow, ReconcileStatus, Rule
 
 
-def _rate(diff: Decimal, erp_value: Decimal) -> Decimal | None:
+def _rate(diff: Decimal, erp_value: Decimal) -> Optional[Decimal]:
     if erp_value == 0:
         return None
     return (diff / erp_value).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
@@ -24,8 +25,8 @@ def build_reconcile_rows(
     start_date: str,
     end_date: str,
     granularity: Granularity,
-    warehouse_values: dict[tuple[str, str, str], Decimal] | None = None,
-    erp_values: dict[tuple[str, str, str], Decimal] | None = None,
+    warehouse_values: Optional[dict[tuple[str, str, str], Decimal]] = None,
+    erp_values: Optional[dict[tuple[str, str, str], Decimal]] = None,
 ) -> list[ReconcileRow]:
     warehouse = warehouse_values
     if warehouse is None:
