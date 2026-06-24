@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import base64
 import hashlib
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -13,8 +14,6 @@ from urllib.parse import urlencode
 
 from app.config import get_settings
 from app.schemas import Granularity, Rule
-
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
 def _extract_items(payload: Any) -> list[dict[str, Any]]:
@@ -96,6 +95,28 @@ def _pkcs7_pad(data: bytes, block_size: int = 16) -> bytes:
     return data + bytes([padding]) * padding
 
 
+def _aes_ecb_encrypt(data: bytes, key: bytes) -> bytes:
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        cipher = Cipher(algorithms.AES(key), modes.ECB())
+        encryptor = cipher.encryptor()
+        return encryptor.update(_pkcs7_pad(data)) + encryptor.finalize()
+    except ModuleNotFoundError:
+        cipher_name = {16: "aes-128-ecb", 24: "aes-192-ecb", 32: "aes-256-ecb"}[len(key)]
+        process = subprocess.run(
+            ["openssl", "enc", f"-{cipher_name}", "-K", key.hex(), "-nosalt"],
+            input=data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if process.returncode != 0:
+            detail = process.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"OpenSSL AES signing failed: {detail}") from None
+        return process.stdout
+
+
 def _build_sign(params: dict[str, Any], app_key: str) -> str:
     filtered = {key: value for key, value in params.items() if value != ""}
     joined = "&".join(f"{key}={_sign_value(filtered[key])}" for key in sorted(filtered))
@@ -103,9 +124,7 @@ def _build_sign(params: dict[str, Any], app_key: str) -> str:
     key = app_key.encode("utf-8")
     if len(key) not in (16, 24, 32):
         raise RuntimeError("LINGXING_APP_KEY must be 16, 24, or 32 bytes for Lingxing AES signing")
-    cipher = Cipher(algorithms.AES(key), modes.ECB())
-    encryptor = cipher.encryptor()
-    encrypted = encryptor.update(_pkcs7_pad(md5_text.encode("utf-8"))) + encryptor.finalize()
+    encrypted = _aes_ecb_encrypt(md5_text.encode("utf-8"), key)
     return base64.b64encode(encrypted).decode("utf-8")
 
 
