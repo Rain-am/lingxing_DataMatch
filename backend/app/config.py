@@ -30,6 +30,7 @@ class Settings:
     lingxing_app_secret: str = ""
     lingxing_access_token: str = ""
     lingxing_refresh_token: str = ""
+    lingxing_token_expires_at: int = 0
     lingxing_access_key: str = ""
     lingxing_access_secret: str = ""
     lingxing_timeout_seconds: int = 30
@@ -47,6 +48,41 @@ def _load_env_file() -> dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip().strip('"').strip("'")
     return values
+
+
+def env_file_path() -> Path:
+    return Path(__file__).resolve().parents[1] / ".env"
+
+
+def update_env_values(updates: dict[str, str]) -> None:
+    env_path = env_file_path()
+    if env_path.exists():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = []
+
+    pending = dict(updates)
+    output: list[str] = []
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in raw_line:
+            output.append(raw_line)
+            continue
+        key = raw_line.split("=", 1)[0].strip()
+        if key in pending:
+            output.append(f"{key}={pending.pop(key)}")
+        else:
+            output.append(raw_line)
+
+    if pending and output and output[-1].strip():
+        output.append("")
+    for key, value in pending.items():
+        output.append(f"{key}={value}")
+
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = env_path.with_suffix(".env.tmp")
+    tmp_path.write_text("\n".join(output) + "\n", encoding="utf-8")
+    tmp_path.replace(env_path)
 
 
 def _get(values: dict[str, str], key: str, default: str) -> str:
@@ -91,6 +127,7 @@ def get_settings() -> Settings:
         lingxing_app_secret=_get(values, "LINGXING_APP_SECRET", ""),
         lingxing_access_token=_get(values, "LINGXING_ACCESS_TOKEN", ""),
         lingxing_refresh_token=_get(values, "LINGXING_REFRESH_TOKEN", ""),
+        lingxing_token_expires_at=_get_int(values, "LINGXING_TOKEN_EXPIRES_AT", 0),
         lingxing_access_key=_get(values, "LINGXING_ACCESS_KEY", ""),
         lingxing_access_secret=_get(values, "LINGXING_ACCESS_SECRET", ""),
         lingxing_timeout_seconds=_get_int(values, "LINGXING_TIMEOUT_SECONDS", 30),
