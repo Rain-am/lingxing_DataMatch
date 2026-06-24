@@ -10,7 +10,7 @@ import urllib.request
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from app.config import get_settings
 from app.schemas import Granularity, Rule
@@ -128,6 +128,22 @@ def _build_sign(params: dict[str, Any], app_key: str) -> str:
     return base64.b64encode(encrypted).decode("utf-8")
 
 
+def _response_text(error: urllib.error.HTTPError) -> str:
+    try:
+        body = error.read()
+    except Exception:
+        body = b""
+    if not body:
+        return ""
+    text = body.decode("utf-8", errors="replace").strip()
+    return text[:1000]
+
+
+def _safe_path(url: str) -> str:
+    parsed = urlsplit(url)
+    return parsed.path or url
+
+
 class LingxingApiClient:
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -212,6 +228,12 @@ class LingxingApiClient:
                     if isinstance(result, dict) and str(result.get("code", "0")) not in {"0", "200", "success"}:
                         raise RuntimeError(f"Lingxing API error {result.get('code')}: {result.get('msg')}")
                     return result
+            except urllib.error.HTTPError as exc:
+                detail = _response_text(exc)
+                message = f"Lingxing API HTTP {exc.code} on {_safe_path(url)}"
+                if detail:
+                    message = f"{message}: {detail}"
+                raise RuntimeError(message) from exc
             except (urllib.error.URLError, TimeoutError) as exc:
                 last_error = exc
                 time.sleep(0.4 * (attempt + 1))
