@@ -46,6 +46,10 @@ def validate_rule_payload(payload: RuleBase) -> None:
 
 
 def validate_source(source: Source) -> None:
+    if source.store_mapping.enabled:
+        validate_identifier(source.store_mapping.table, f"source {source.name} store mapping table")
+        validate_identifier(source.store_mapping.id_field, f"source {source.name} store mapping id_field")
+        validate_identifier(source.store_mapping.name_field, f"source {source.name} store mapping name_field")
     if source.type == "warehouse":
         validate_identifier(source.table_or_path, f"source {source.name} table")
         validate_identifier(source.date_field, f"source {source.name} date_field")

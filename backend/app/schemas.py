@@ -26,6 +26,13 @@ class Metric(BaseModel):
         return value
 
 
+class StoreMapping(BaseModel):
+    enabled: bool = False
+    table: str = "seller"
+    id_field: str = "sid"
+    name_field: str = "name"
+
+
 class Source(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     type: SourceType
@@ -35,6 +42,7 @@ class Source(BaseModel):
     period_mode: PeriodMode = "response_field"
     request_config: dict[str, Any] = Field(default_factory=dict)
     metrics: list[Metric] = Field(min_items=1)
+    store_mapping: StoreMapping = Field(default_factory=StoreMapping)
 
 
 class RuleBase(BaseModel):

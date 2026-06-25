@@ -3,7 +3,7 @@
     <header class="topbar">
       <div>
         <h1>领星数仓对数</h1>
-        <p>规则独立运行，结果自由组合对比。</p>
+        <p>规则独立运行，结果自由组合对比，支持店铺 ID 映射。</p>
       </div>
       <nav class="topnav">
         <button :class="{ active: tab === 'rules' }" @click="tab = 'rules'">规则管理</button>
@@ -34,7 +34,7 @@
               @click="editRule(rule)"
             >
               <strong>{{ rule.name }}</strong>
-              <span>{{ rule.updated_at ? formatDateTime(rule.updated_at) : '' }}</span>
+              <span>{{ rule.updated_at ? formatDateTime(rule.updated_at) : '未更新' }}</span>
             </button>
             <div v-if="filteredRules.length === 0" class="empty">暂无规则</div>
           </div>
@@ -58,7 +58,7 @@
             <div class="form-grid compact">
               <label>
                 规则名称
-                <input v-model="ruleForm.name" required placeholder="如：利润报表月度对数" />
+                <input v-model="ruleForm.name" required placeholder="如：订单利润月度对数" />
               </label>
               <label>
                 ERP 币种
@@ -72,33 +72,42 @@
             <div class="form-grid compact">
               <label>
                 数仓表名
-                <input v-model="ruleForm.warehouse_table" required placeholder="bi_profit_statement_report_usd" />
+                <input v-model="ruleForm.warehouse_table" required placeholder="bi_order_profit_msku_info_usd" />
               </label>
               <label>
                 数仓日期字段
-                <input v-model="ruleForm.warehouse_date_field" required placeholder="dataDate" />
+                <input v-model="ruleForm.warehouse_date_field" required placeholder="r_date" />
               </label>
               <label>
                 数仓店铺字段
-                <input v-model="ruleForm.warehouse_store_field" required placeholder="storeName" />
+                <input v-model="ruleForm.warehouse_store_field" required placeholder="seller_id 或 seller_name" />
               </label>
             </div>
+            <StoreMappingForm v-model="ruleForm.warehouse_store_mapping" title="数仓店铺映射" />
           </section>
 
           <section class="form-section">
             <h3>ERP 配置</h3>
+            <p class="hint">
+              订单利润接口没有返回日期字段时，周期来源选“请求月份”，ERP 返回日期字段会自动忽略。ERP 返回店铺字段请填响应数据里的字段名，比如 sid，不要填请求参数 sids。
+            </p>
             <div class="form-grid compact">
               <label>
                 ERP API Path
-                <input v-model="ruleForm.erp_module_path" required placeholder="/bd/profit/report/open/report/seller/summary/list" />
+                <input v-model="ruleForm.erp_module_path" required placeholder="/basicOpen/finance/mreport/OrderProfit" />
               </label>
               <label>
                 ERP 返回日期字段
-                <input v-model="ruleForm.erp_date_field" :required="ruleForm.erp_period_mode === 'response_field'" placeholder="date" />
+                <input
+                  v-model="ruleForm.erp_date_field"
+                  :disabled="ruleForm.erp_period_mode === 'request_month'"
+                  :required="ruleForm.erp_period_mode === 'response_field'"
+                  :placeholder="ruleForm.erp_period_mode === 'request_month' ? '无需填写' : 'date'"
+                />
               </label>
               <label>
                 ERP 返回店铺字段
-                <input v-model="ruleForm.erp_store_field" required placeholder="storeName" />
+                <input v-model="ruleForm.erp_store_field" required placeholder="sid 或 storeName" />
               </label>
               <label>
                 周期来源
@@ -108,6 +117,7 @@
                 </select>
               </label>
             </div>
+            <StoreMappingForm v-model="ruleForm.erp_store_mapping" title="ERP 店铺映射" />
             <label class="wide">
               ERP 请求配置 JSON（币种固定为 USD）
               <textarea v-model="erpRequestConfigText" rows="7" spellcheck="false"></textarea>
@@ -146,7 +156,7 @@
         <div class="section-head">
           <div>
             <h2>运行对账</h2>
-            <span>可一次选择多个规则，同一日期范围批量运行</span>
+            <span>可一次选择多个规则，同一日期范围批量运行。</span>
           </div>
         </div>
         <form class="run-form batch" @submit.prevent="runBatch">
@@ -165,7 +175,9 @@
               <option value="month">按月</option>
             </select>
           </label>
-          <button :disabled="running || selectedRuleIds.length === 0">{{ running ? '运行中...' : `开始对账（${selectedRuleIds.length}）` }}</button>
+          <button :disabled="running || selectedRuleIds.length === 0">
+            {{ running ? '运行中...' : `开始对账（${selectedRuleIds.length}）` }}
+          </button>
         </form>
         <div class="check-list">
           <label v-for="rule in rules" :key="rule.id" class="check-item">
@@ -179,7 +191,7 @@
         <div class="section-head">
           <div>
             <h2>结果查看</h2>
-            <span>选择多个运行结果，自由筛选月份、指标和规则对比</span>
+            <span>选择多个运行结果，按月份、指标、规则自由对比。</span>
           </div>
           <button class="secondary" :disabled="selectedRunIds.length === 0" @click="downloadCompare">导出所选对比</button>
         </div>
@@ -209,6 +221,7 @@
                   <small>{{ run.start_date }} 至 {{ run.end_date }} · {{ run.status }}</small>
                 </span>
               </label>
+              <div v-if="runHistory.length === 0" class="empty">暂无运行记录</div>
             </div>
           </aside>
 
@@ -224,7 +237,7 @@
               </div>
               <div>
                 <span>店铺明细</span>
-                <strong>{{ selectedRuns.reduce((sum, run) => sum + run.rows.length, 0) }}</strong>
+                <strong>{{ selectedRuns.reduce((sum, run) => sum + (run.rows?.length || 0), 0) }}</strong>
               </div>
             </div>
             <div class="filters">
@@ -285,7 +298,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
 import {
   batchRunReconcile,
   createRule,
@@ -296,6 +309,46 @@ import {
   listRuns,
   updateRule,
 } from './api'
+
+const StoreMappingForm = defineComponent({
+  props: {
+    modelValue: { type: Object, required: true },
+    title: { type: String, required: true },
+  },
+  emits: ['update:modelValue'],
+  setup(props, { emit }) {
+    const patch = (updates) => emit('update:modelValue', { ...props.modelValue, ...updates })
+    return () => h('div', { class: 'mapping-box' }, [
+      h('label', { class: 'check-inline' }, [
+        h('input', {
+          type: 'checkbox',
+          checked: Boolean(props.modelValue.enabled),
+          onChange: (event) => patch({ enabled: event.target.checked }),
+        }),
+        h('span', props.title),
+      ]),
+      props.modelValue.enabled
+        ? h('div', { class: 'form-grid compact' }, [
+            h('label', ['映射表', h('input', {
+              value: props.modelValue.table,
+              placeholder: 'seller',
+              onInput: (event) => patch({ table: event.target.value }),
+            })]),
+            h('label', ['ID 字段', h('input', {
+              value: props.modelValue.id_field,
+              placeholder: 'sid',
+              onInput: (event) => patch({ id_field: event.target.value }),
+            })]),
+            h('label', ['名称字段', h('input', {
+              value: props.modelValue.name_field,
+              placeholder: 'seller_name',
+              onInput: (event) => patch({ name_field: event.target.value }),
+            })]),
+          ])
+        : null,
+    ])
+  },
+})
 
 const defaultRequestConfig = (mode = 'page') => ({
   startDateParam: 'startDate',
@@ -309,16 +362,19 @@ const defaultRequestConfig = (mode = 'page') => ({
   extraParams: { sids: [], mids: [], currencyCode: 'USD' },
 })
 
+const defaultStoreMapping = () => ({ enabled: false, table: 'seller', id_field: 'sid', name_field: 'name' })
 const emptyMetric = () => ({ name: '', warehouse_expression: '', erp_field: '', aggregation: 'sum', tolerance: 0 })
 const emptyRule = () => ({
   name: '',
   warehouse_table: '',
   warehouse_date_field: 'dataDate',
   warehouse_store_field: 'storeName',
+  warehouse_store_mapping: defaultStoreMapping(),
   erp_module_path: '',
   erp_date_field: 'date',
   erp_store_field: 'storeName',
   erp_period_mode: 'response_field',
+  erp_store_mapping: defaultStoreMapping(),
   metrics: [emptyMetric()],
 })
 
@@ -351,7 +407,7 @@ const compareRows = computed(() => {
     for (const row of run.summary_rows || []) {
       const key = `${row.period}__${row.metric}`
       if (!groups.has(key)) groups.set(key, { key, period: row.period, metric: row.metric, values: {} })
-      groups.get(key).values[run.id] = Object.values(row.values || {}).reduce((sum, value) => sum + Number(value || 0), 0)
+      groups.get(key).values[run.id] = summaryValue(row)
     }
   }
   return Array.from(groups.values()).sort((a, b) => a.period.localeCompare(b.period) || a.metric.localeCompare(b.metric, 'zh-CN'))
@@ -374,12 +430,17 @@ const filteredCompareRows = computed(() => {
     })
 })
 
+watch(() => ruleForm.erp_period_mode, (mode) => {
+  if (mode === 'request_month') ruleForm.erp_date_field = ''
+  if (mode === 'response_field' && !ruleForm.erp_date_field) ruleForm.erp_date_field = 'date'
+})
+
 function notify(text, type = 'info') {
   message.value = text
   messageType.value = type
   window.setTimeout(() => {
     if (message.value === text) message.value = ''
-  }, 4500)
+  }, 5000)
 }
 
 async function refreshRules() {
@@ -405,6 +466,10 @@ function firstSource(rule, type) {
   return (rule.sources || []).find((source) => source.type === type)
 }
 
+function normalizeMapping(mapping) {
+  return { ...defaultStoreMapping(), ...(mapping || {}) }
+}
+
 function normalizeRule(rule) {
   const warehouse = firstSource(rule, 'warehouse')
   const erp = firstSource(rule, 'erp')
@@ -413,10 +478,12 @@ function normalizeRule(rule) {
     warehouse_table: rule.warehouse_table || warehouse?.table_or_path || '',
     warehouse_date_field: rule.warehouse_date_field || warehouse?.date_field || 'dataDate',
     warehouse_store_field: rule.warehouse_store_field || warehouse?.store_field || 'storeName',
+    warehouse_store_mapping: normalizeMapping(warehouse?.store_mapping),
     erp_module_path: rule.erp_module_path || erp?.table_or_path || '',
     erp_date_field: rule.erp_date_field || erp?.date_field || 'date',
     erp_store_field: rule.erp_store_field || erp?.store_field || 'storeName',
     erp_period_mode: erp?.period_mode || 'response_field',
+    erp_store_mapping: normalizeMapping(erp?.store_mapping),
     erp_request_config: forceUsd(rule.erp_request_config || erp?.request_config || defaultRequestConfig()),
     metrics: rule.metrics?.length ? rule.metrics : (warehouse?.metrics || erp?.metrics || [emptyMetric()]),
   }
@@ -445,13 +512,14 @@ function removeMetric(index) {
 
 function payloadFromForm() {
   const erpRequestConfig = forceUsd(JSON.parse(erpRequestConfigText.value || '{}'))
+  const erpDateField = ruleForm.erp_period_mode === 'request_month' ? '' : ruleForm.erp_date_field
   return {
     name: ruleForm.name,
     warehouse_table: ruleForm.warehouse_table,
     warehouse_date_field: ruleForm.warehouse_date_field,
     warehouse_store_field: ruleForm.warehouse_store_field,
     erp_module_path: ruleForm.erp_module_path,
-    erp_date_field: ruleForm.erp_period_mode === 'request_month' ? '' : ruleForm.erp_date_field,
+    erp_date_field: erpDateField,
     erp_store_field: ruleForm.erp_store_field,
     erp_request_config: erpRequestConfig,
     metrics: ruleForm.metrics,
@@ -466,16 +534,18 @@ function payloadFromForm() {
         period_mode: 'response_field',
         request_config: {},
         metrics: ruleForm.metrics,
+        store_mapping: ruleForm.warehouse_store_mapping,
       },
       {
         name: 'ERP',
         type: 'erp',
         table_or_path: ruleForm.erp_module_path,
-        date_field: ruleForm.erp_period_mode === 'request_month' ? '' : ruleForm.erp_date_field,
+        date_field: erpDateField,
         store_field: ruleForm.erp_store_field,
         period_mode: ruleForm.erp_period_mode,
         request_config: erpRequestConfig,
         metrics: ruleForm.metrics,
+        store_mapping: ruleForm.erp_store_mapping,
       },
     ],
   }
@@ -533,6 +603,12 @@ async function syncSelectedRuns() {
   }
 }
 
+function summaryValue(row) {
+  if (row.values?.ERP !== undefined) return Number(row.values.ERP || 0)
+  if (row.values) return Object.values(row.values).reduce((sum, value) => sum + Number(value || 0), 0)
+  return Number(row.erp_value ?? row.value ?? 0)
+}
+
 function toggleExpand(key) {
   expandedKey.value = expandedKey.value === key ? '' : key
 }
@@ -543,7 +619,7 @@ function detailRows(summary) {
     for (const row of run.rows || []) {
       if (row.period !== summary.period || row.metric !== summary.metric) continue
       if (!groups.has(row.store)) groups.set(row.store, { store: row.store, values: {} })
-      groups.get(row.store).values[run.id] = (groups.get(row.store).values[run.id] || 0) + Number(row.value || 0)
+      groups.get(row.store).values[run.id] = (groups.get(row.store).values[run.id] || 0) + Number(row.value ?? row.erp_value ?? 0)
     }
   }
   return Array.from(groups.values()).sort((a, b) => String(a.store).localeCompare(String(b.store), 'zh-CN'))

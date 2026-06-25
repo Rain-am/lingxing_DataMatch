@@ -295,6 +295,33 @@ textarea {
   display: grid;
 }
 
+.hint {
+  margin: 0;
+  color: #667789;
+  line-height: 1.55;
+}
+
+.mapping-box {
+  border: 1px dashed #c8d3df;
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  background: #fff;
+}
+
+.check-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #253445;
+}
+
+.check-inline input {
+  width: auto;
+  min-height: auto;
+}
+
 .sources-editor {
   display: grid;
   gap: 14px;

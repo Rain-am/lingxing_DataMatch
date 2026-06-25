@@ -501,13 +501,19 @@ def fetch_erp_source_values(
 ) -> dict[tuple[str, str, str, str], Decimal]:
     api = client or LingxingApiClient()
     records = api.fetch_source_records(source, start_date, end_date, granularity)
+    store_mapping: dict[str, str] = {}
+    if source.store_mapping.enabled:
+        from app.warehouse import fetch_store_mapping
+
+        store_mapping = fetch_store_mapping(source.store_mapping)
     result: dict[tuple[str, str, str, str], Decimal] = {}
     for record in records:
         if source.period_mode == "request_month":
             period = str(record.get("_request_period") or "")
         else:
             period = _period(record.get(source.date_field), granularity)
-        store = str(record.get(source.store_field) or "")
+        raw_store = str(record.get(source.store_field) or "")
+        store = store_mapping.get(raw_store, raw_store)
         for metric in source.metrics:
             key = (period, store, metric.name, source.name)
             if metric.aggregation == "count":

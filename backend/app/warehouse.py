@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from decimal import Decimal
-from typing import Iterator
-from typing import Any
+from typing import Any, Iterator
 
 import pymysql
 from pymysql.cursors import DictCursor
 
 from app.config import get_settings
-from app.schemas import Granularity, Rule, Source
+from app.schemas import Granularity, Rule, Source, StoreMapping
 
 
 def _quote_identifier(identifier: str) -> str:
@@ -21,6 +20,10 @@ def _period_sql(field: str, granularity: Granularity) -> str:
     # percent signs must be escaped as %% inside the query string.
     fmt = "%%Y-%%m-%%d" if granularity == "day" else "%%Y-%%m-01"
     return f"DATE_FORMAT({_quote_identifier(field)}, '{fmt}')"
+
+
+def _map_store(raw_store: str, mapping: dict[str, str]) -> str:
+    return mapping.get(raw_store, raw_store)
 
 
 @contextmanager
@@ -100,15 +103,44 @@ def fetch_warehouse_source_values(
         with connection.cursor() as cursor:
             cursor.execute(sql, (start_date, end_date))
             rows: list[dict[str, Any]] = cursor.fetchall()
+        store_mapping = fetch_store_mapping_for_source(source, connection)
 
     result: dict[tuple[str, str, str, str], Decimal] = {}
     for row in rows:
         period = str(row["period"])
-        store = str(row["store"] or "")
+        store = _map_store(str(row["store"] or ""), store_mapping)
         for index, metric in enumerate(source.metrics):
             value = row.get(f"metric_{index}") or 0
             result[(period, store, metric.name, source.name)] = Decimal(str(value))
     return result
+
+
+def fetch_store_mapping(mapping: StoreMapping) -> dict[str, str]:
+    with _warehouse_connection() as connection:
+        return _fetch_store_mapping(mapping, connection)
+
+
+def fetch_store_mapping_for_source(source: Source, connection: pymysql.connections.Connection) -> dict[str, str]:
+    if not source.store_mapping.enabled:
+        return {}
+    return _fetch_store_mapping(source.store_mapping, connection)
+
+
+def _fetch_store_mapping(mapping: StoreMapping, connection: pymysql.connections.Connection) -> dict[str, str]:
+    if not mapping.enabled:
+        return {}
+    table = _quote_identifier(mapping.table)
+    id_field = _quote_identifier(mapping.id_field)
+    name_field = _quote_identifier(mapping.name_field)
+    sql = f"""
+        SELECT CAST({id_field} AS CHAR) AS store_id, CAST({name_field} AS CHAR) AS store_name
+        FROM {table}
+        WHERE {id_field} IS NOT NULL
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        rows: list[dict[str, Any]] = cursor.fetchall()
+    return {str(row["store_id"]): str(row["store_name"] or row["store_id"]) for row in rows}
 
 
 def fetch_warehouse_aggregate(
