@@ -1,6 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
@@ -13,6 +16,7 @@ from app.exporter import build_compare_excel, build_run_excel
 from app.reconcile import build_reconcile_result
 from app.schemas import (
     BatchRunFailure,
+    BatchRunJob,
     BatchRunRequest,
     BatchRunResponse,
     CompareExportRequest,
@@ -50,6 +54,23 @@ app.add_middleware(
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+
+_batch_executor = ThreadPoolExecutor(max_workers=2)
+_batch_jobs: dict[str, BatchRunJob] = {}
+_batch_jobs_lock = Lock()
+
+
+def _save_batch_job(job: BatchRunJob) -> None:
+    job.updated_at = datetime.now()
+    with _batch_jobs_lock:
+        _batch_jobs[job.job_id] = job.model_copy(deep=True)
+
+
+def _get_batch_job(job_id: str) -> Optional[BatchRunJob]:
+    with _batch_jobs_lock:
+        job = _batch_jobs.get(job_id)
+        return job.model_copy(deep=True) if job else None
 
 
 @app.on_event("startup")
@@ -162,6 +183,71 @@ def api_batch_run_reconcile(payload: BatchRunRequest) -> BatchRunResponse:
                 BatchRunFailure(rule_id=rule.id, rule_name=rule.name, run=failed_run, error_message=str(exc))
             )
     return BatchRunResponse(runs=runs, failed_runs=failed_runs, created_at=datetime.now())
+
+
+def _execute_batch_job(job_id: str, payload: BatchRunRequest) -> None:
+    job = _get_batch_job(job_id)
+    if not job:
+        return
+    job.status = "running"
+    _save_batch_job(job)
+    for rule_id in payload.rule_ids:
+        rule = get_rule(rule_id)
+        job.current_rule_id = rule_id
+        job.current_rule_name = rule.name if rule else ""
+        _save_batch_job(job)
+        if not rule:
+            job.failed_runs.append(BatchRunFailure(rule_id=rule_id, rule_name="", error_message="rule not found"))
+            job.completed += 1
+            _save_batch_job(job)
+            continue
+        try:
+            job.runs.append(_run_rule(rule, payload.start_date, payload.end_date, payload.granularity))
+        except Exception as exc:
+            failed_run = save_run(
+                rule_id=rule.id,
+                rule_name=rule.name,
+                start_date=payload.start_date,
+                end_date=payload.end_date,
+                granularity=payload.granularity,
+                rows=[],
+                status="failed",
+                error_message=str(exc),
+            )
+            job.failed_runs.append(
+                BatchRunFailure(rule_id=rule.id, rule_name=rule.name, run=failed_run, error_message=str(exc))
+            )
+        finally:
+            job.completed += 1
+            _save_batch_job(job)
+    job.status = "completed"
+    job.current_rule_id = None
+    job.current_rule_name = ""
+    job.finished_at = datetime.now()
+    _save_batch_job(job)
+
+
+@app.post("/api/reconcile/batch-run/jobs", response_model=BatchRunJob)
+def api_create_batch_run_job(payload: BatchRunRequest) -> BatchRunJob:
+    now = datetime.now()
+    job = BatchRunJob(
+        job_id=uuid4().hex,
+        status="queued",
+        total=len(payload.rule_ids),
+        created_at=now,
+        updated_at=now,
+    )
+    _save_batch_job(job)
+    _batch_executor.submit(_execute_batch_job, job.job_id, payload)
+    return job
+
+
+@app.get("/api/reconcile/batch-run/jobs/{job_id}", response_model=BatchRunJob)
+def api_get_batch_run_job(job_id: str) -> BatchRunJob:
+    job = _get_batch_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="batch job not found")
+    return job
 
 
 @app.get("/api/reconcile/runs", response_model=list[RunListItem])

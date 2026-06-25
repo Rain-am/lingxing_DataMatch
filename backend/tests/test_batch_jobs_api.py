@@ -1,0 +1,67 @@
+from datetime import date, datetime
+
+from fastapi.testclient import TestClient
+
+from app import main
+from app.schemas import ReconcileRun, Rule
+
+
+def _rule(rule_id: int) -> Rule:
+    now = datetime.now()
+    return Rule(
+        id=rule_id,
+        name=f"规则{rule_id}",
+        warehouse_table="warehouse_table",
+        warehouse_date_field="biz_date",
+        warehouse_store_field="store",
+        erp_module_path="/example",
+        erp_date_field="date",
+        erp_store_field="store",
+        erp_request_config={},
+        metrics=[],
+        sources=[],
+        comparison_base_source="",
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _run(rule: Rule, start_date: date, end_date: date, granularity: str) -> ReconcileRun:
+    return ReconcileRun(
+        id=rule.id + 100,
+        rule_id=rule.id,
+        rule_name=rule.name,
+        start_date=start_date,
+        end_date=end_date,
+        granularity=granularity,
+        status="success",
+        rows=[],
+        summary_rows=[],
+        created_at=datetime.now(),
+    )
+
+
+def test_batch_run_job_completes(monkeypatch) -> None:
+    monkeypatch.setattr(main, "get_rule", _rule)
+    monkeypatch.setattr(main, "_run_rule", _run)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/reconcile/batch-run/jobs",
+        json={
+            "rule_ids": [1, 2],
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-31",
+            "granularity": "month",
+        },
+    )
+
+    assert response.status_code == 200
+    job_id = response.json()["job_id"]
+    for _ in range(20):
+        job = client.get(f"/api/reconcile/batch-run/jobs/{job_id}").json()
+        if job["status"] == "completed":
+            break
+    assert job["status"] == "completed"
+    assert job["completed"] == 2
+    assert [run["rule_id"] for run in job["runs"]] == [1, 2]

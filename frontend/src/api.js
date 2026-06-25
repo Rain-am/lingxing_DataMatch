@@ -44,6 +44,14 @@ export function batchRunReconcile(payload) {
   return request('/api/reconcile/batch-run', { method: 'POST', body: JSON.stringify(payload) })
 }
 
+export function startBatchRunJob(payload) {
+  return request('/api/reconcile/batch-run/jobs', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function getBatchRunJob(jobId) {
+  return request(`/api/reconcile/batch-run/jobs/${jobId}`)
+}
+
 export function listRuns(params = {}) {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {

@@ -162,6 +162,20 @@ class BatchRunResponse(BaseModel):
     created_at: datetime
 
 
+class BatchRunJob(BaseModel):
+    job_id: str
+    status: Literal["queued", "running", "completed"]
+    total: int
+    completed: int = 0
+    current_rule_id: Optional[int] = None
+    current_rule_name: str = ""
+    runs: list[ReconcileRun] = Field(default_factory=list)
+    failed_runs: list[BatchRunFailure] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+    finished_at: Optional[datetime] = None
+
+
 class CompareExportRequest(BaseModel):
     run_ids: list[int] = Field(min_items=1)
 

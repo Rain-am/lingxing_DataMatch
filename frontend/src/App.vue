@@ -179,9 +179,22 @@
             </select>
           </label>
           <button :disabled="running || selectedRuleIds.length === 0">
-            {{ running ? '运行中...' : `开始对账（${selectedRuleIds.length}）` }}
+            {{ running ? runButtonText : `开始对账（${selectedRuleIds.length}）` }}
           </button>
         </form>
+        <div v-if="currentJob" class="job-progress">
+          <div class="job-progress-head">
+            <strong>{{ currentJob.status === 'completed' ? '运行完成' : '后台运行中' }}</strong>
+            <span>{{ currentJob.completed }} / {{ currentJob.total }}</span>
+          </div>
+          <progress :value="currentJob.completed" :max="currentJob.total || 1"></progress>
+          <p v-if="currentJob.status !== 'completed' && currentJob.current_rule_name">
+            正在处理：{{ currentJob.current_rule_name }}
+          </p>
+          <p v-else-if="currentJob.status !== 'completed'">
+            任务已提交，页面会自动刷新进度。
+          </p>
+        </div>
         <div v-if="failedRuns.length" class="failure-list">
           <div v-for="failure in failedRuns" :key="failure.run?.id || failure.rule_id" class="failure-item">
             <div>
@@ -323,16 +336,17 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineComponent, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
-  batchRunReconcile,
   createRule,
   deleteRule,
   deleteRun,
   exportCompareRuns,
+  getBatchRunJob,
   getRun,
   listRules,
   listRuns,
+  startBatchRunJob,
   updateRule,
 } from './api'
 
@@ -412,6 +426,8 @@ const selectedRuleIds = ref([])
 const selectedRunIds = ref([])
 const failedRuns = ref([])
 const running = ref(false)
+const currentJob = ref(null)
+const jobPollTimer = ref(null)
 const message = ref('')
 const messageType = ref('info')
 const editingRuleId = ref(null)
@@ -430,6 +446,11 @@ const filteredRules = computed(() => {
 
 const orderProfitStoreFieldWarning = computed(() => {
   return ruleForm.erp_module_path.toLowerCase().includes('orderprofit') && ruleForm.erp_store_field.trim() === 'sids'
+})
+
+const runButtonText = computed(() => {
+  if (!currentJob.value) return '运行中...'
+  return `运行中 ${currentJob.value.completed}/${currentJob.value.total}`
 })
 
 const compareRows = computed(() => {
@@ -615,18 +636,46 @@ async function removeRule(id) {
 async function runBatch() {
   running.value = true
   failedRuns.value = []
+  currentJob.value = null
+  clearJobPolling()
   try {
-    const result = await batchRunReconcile({ ...runForm, rule_ids: selectedRuleIds.value })
-    failedRuns.value = result.failed_runs || []
-    notify(`运行完成：成功 ${result.runs.length} 个，失败 ${failedRuns.value.length} 个`, failedRuns.value.length ? 'error' : 'success')
-    selectedRunIds.value = result.runs.map((run) => run.id)
-    selectedRuns.value = result.runs
+    const job = await startBatchRunJob({ ...runForm, rule_ids: selectedRuleIds.value })
+    currentJob.value = job
+    notify('任务已提交，正在后台运行。可以停留在本页查看进度。', 'info')
+    jobPollTimer.value = window.setInterval(() => pollBatchJob(job.job_id), 2000)
+    await pollBatchJob(job.job_id)
+  } catch (error) {
+    notify(`运行失败：${error.message}`, 'error')
+    running.value = false
+  } finally {
+    // Completion is handled by pollBatchJob so long-running requests never block the UI thread.
+  }
+}
+
+async function pollBatchJob(jobId) {
+  try {
+    const job = await getBatchRunJob(jobId)
+    currentJob.value = job
+    if (job.status !== 'completed') return
+    clearJobPolling()
+    running.value = false
+    failedRuns.value = job.failed_runs || []
+    notify(`运行完成：成功 ${job.runs.length} 个，失败 ${failedRuns.value.length} 个`, failedRuns.value.length ? 'error' : 'success')
+    selectedRunIds.value = job.runs.map((run) => run.id)
+    selectedRuns.value = job.runs
     await refreshRuns()
     if (!failedRuns.value.length) tab.value = 'result'
   } catch (error) {
-    notify(`运行失败：${error.message}`, 'error')
-  } finally {
+    clearJobPolling()
     running.value = false
+    notify(`进度刷新失败：${error.message}。可到结果查看页刷新历史记录。`, 'error')
+  }
+}
+
+function clearJobPolling() {
+  if (jobPollTimer.value) {
+    window.clearInterval(jobPollTimer.value)
+    jobPollTimer.value = null
   }
 }
 
@@ -751,5 +800,9 @@ onMounted(async () => {
   } catch (error) {
     notify(error.message, 'error')
   }
+})
+
+onBeforeUnmount(() => {
+  clearJobPolling()
 })
 </script>
