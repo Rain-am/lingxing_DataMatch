@@ -37,6 +37,20 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _expand_nested_data_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    for item in items:
+        detail_rows = item.get("data")
+        if isinstance(detail_rows, list):
+            parent = {key: value for key, value in item.items() if key != "data"}
+            for detail in detail_rows:
+                if isinstance(detail, dict):
+                    expanded.append({**parent, **detail})
+            continue
+        expanded.append(item)
+    return expanded
+
+
 def _has_next(payload: Any, page: int, page_size: int, item_count: int) -> bool:
     if not isinstance(payload, dict):
         return item_count >= page_size
@@ -72,6 +86,8 @@ def _period(value: Any, granularity: Granularity) -> str:
 def _decimal(value: Any) -> Decimal:
     if value is None or value == "":
         return Decimal("0")
+    if isinstance(value, list):
+        return sum((_decimal(item) for item in value), Decimal("0"))
     return Decimal(str(value))
 
 
@@ -80,12 +96,37 @@ def _field_value(record: dict[str, Any], field: str) -> Any:
         return None
     if field in record:
         return record.get(field)
-    value: Any = record
-    for part in field.replace(">>", ".").split("."):
+    nested_data = record.get("data")
+    if isinstance(nested_data, dict) and field in nested_data:
+        return nested_data.get(field)
+    if isinstance(nested_data, list):
+        nested_values = _walk_field_path(nested_data, [field])
+        if nested_values:
+            return nested_values
+    parts = [part for part in field.replace(">>", ".").split(".") if part]
+    if parts and parts[0] == "data" and "data" not in record:
+        fallback = _walk_field_path(record, parts[1:])
+        if fallback is not None:
+            return fallback
+    return _walk_field_path(record, parts)
+
+
+def _walk_field_path(value: Any, parts: list[str]) -> Any:
+    for part in parts:
         if not part:
             continue
         if isinstance(value, dict):
             value = value.get(part)
+        elif isinstance(value, list):
+            next_values = []
+            for item in value:
+                if isinstance(item, dict):
+                    nested = item.get(part)
+                    if isinstance(nested, list):
+                        next_values.extend(nested)
+                    elif nested is not None:
+                        next_values.append(nested)
+            value = next_values
         else:
             return None
     return value
@@ -94,10 +135,14 @@ def _field_value(record: dict[str, Any], field: str) -> Any:
 def _store_value(record: dict[str, Any], field: str) -> str:
     value = _field_value(record, field)
     if isinstance(value, list):
-        if len(value) == 1:
-            value = value[0]
+        unique_values = []
+        for item in value:
+            if item not in unique_values:
+                unique_values.append(item)
+        if len(unique_values) == 1:
+            value = unique_values[0]
         else:
-            value = ",".join(str(item) for item in value)
+            value = ",".join(str(item) for item in unique_values)
     return str(value or "")
 
 
@@ -393,14 +438,18 @@ class LingxingApiClient:
             raise RuntimeError("ERP extraParams must be a JSON object")
         extra_params = dict(extra_params)
         extra_params["currencyCode"] = "USD"
+        order_profit = "orderprofit" in url.lower()
         start_param = str(config.get("startDateParam") or "startDate")
         end_param = str(config.get("endDateParam") or "endDate")
         page_param = str(config.get("pageParam") or "page")
         page_size_param = str(config.get("pageSizeParam") or "pageSize")
-        offset_param = str(config.get("offsetParam") or "")
-        length_param = str(config.get("lengthParam") or "")
+        offset_param = str(config.get("offsetParam") or ("offset" if order_profit else ""))
+        length_param = str(config.get("lengthParam") or ("length" if order_profit else ""))
         monthly_param = str(config.get("monthlyQueryParam") or "monthlyQuery")
         pagination_mode = str(config.get("paginationMode") or ("offset" if offset_param or length_param else "page"))
+        if order_profit and pagination_mode == "page" and not config.get("paginationMode"):
+            pagination_mode = "offset"
+        effective_page_size = max(page_size, 5000) if order_profit and pagination_mode == "offset" else page_size
         page = 1
         offset = int(config.get("offsetStart") or 0)
 
@@ -410,22 +459,23 @@ class LingxingApiClient:
             payload[end_param] = end_date if request_period else _date_for_request(end_date, granularity)
             if pagination_mode == "offset":
                 payload[offset_param or "offset"] = offset
-                payload[length_param or "length"] = page_size
+                payload[length_param or "length"] = effective_page_size
             else:
                 payload[page_param] = page
-                payload[page_size_param] = page_size
+                payload[page_size_param] = effective_page_size
             if monthly_param:
                 payload[monthly_param] = granularity == "month"
             response = self._post_json(url, payload)
-            items = _extract_items(response)
+            raw_items = _extract_items(response)
+            items = _expand_nested_data_items(raw_items)
             if request_period:
                 for item in items:
                     item["_request_period"] = request_period
             records.extend(items)
-            if not _has_next(response, page, page_size, len(items)):
+            if not _has_next(response, page, effective_page_size, len(raw_items)):
                 break
             page += 1
-            offset += page_size
+            offset += effective_page_size
         return records
 
     def _post_json(self, url: str, payload: dict[str, Any]) -> Any:

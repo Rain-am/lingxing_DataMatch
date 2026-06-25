@@ -198,6 +198,27 @@ def test_erp_window_forces_usd_currency(monkeypatch) -> None:
     assert captured_payloads[0]["currencyCode"] == "USD"
 
 
+def test_order_profit_defaults_to_offset_pagination(monkeypatch) -> None:
+    captured_payloads = []
+
+    client = LingxingApiClient()
+    client._post_json = lambda url, payload: captured_payloads.append(payload) or {"code": "0", "data": []}
+
+    client._fetch_window_records(
+        "https://openapi.lingxing.com/basicOpen/finance/mreport/OrderProfit",
+        {"extraParams": {}},
+        "2026-05-01",
+        "2026-05-31",
+        "month",
+        200,
+    )
+
+    assert captured_payloads[0]["offset"] == 0
+    assert captured_payloads[0]["length"] == 5000
+    assert "page" not in captured_payloads[0]
+    assert "pageSize" not in captured_payloads[0]
+
+
 def test_token_error_does_not_expose_secret(monkeypatch) -> None:
     def fake_urlopen(request, timeout):
         return FakeResponse(
