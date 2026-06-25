@@ -56,6 +56,10 @@ export function getRun(runId) {
   return request(`/api/reconcile/runs/${runId}`)
 }
 
+export function deleteRun(runId) {
+  return request(`/api/reconcile/runs/${runId}`, { method: 'DELETE' })
+}
+
 export function exportRunUrl(runId) {
   return `${API_BASE}/api/reconcile/runs/${runId}/export`
 }

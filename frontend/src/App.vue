@@ -89,8 +89,11 @@
           <section class="form-section">
             <h3>ERP 配置</h3>
             <p class="hint">
-              订单利润接口没有返回日期字段时，周期来源选“请求月份”，ERP 返回日期字段会自动忽略。ERP 返回店铺字段请填响应数据里的字段名，比如 sid，不要填请求参数 sids。
+              订单利润接口没有返回日期字段时，周期来源选“请求月份”，ERP 返回日期字段会自动忽略。ERP 返回店铺字段支持普通字段和路径字段，例如 sid、data>>sids。
             </p>
+            <div v-if="orderProfitStoreFieldWarning" class="inline-warning">
+              文档里的请求参数 sids 不是返回字段；如果返回字段写作 data&gt;&gt;sids，请在这里填 data&gt;&gt;sids。
+            </div>
             <div class="form-grid compact">
               <label>
                 ERP API Path
@@ -107,7 +110,7 @@
               </label>
               <label>
                 ERP 返回店铺字段
-                <input v-model="ruleForm.erp_store_field" required placeholder="sid 或 storeName" />
+                <input v-model="ruleForm.erp_store_field" required placeholder="sid、storeName 或 data>>sids" />
               </label>
               <label>
                 周期来源
@@ -139,8 +142,8 @@
             </div>
             <div v-for="(metric, index) in ruleForm.metrics" :key="index" class="metric-row">
               <input v-model="metric.name" required placeholder="毛利润" />
-              <input v-model="metric.warehouse_expression" required placeholder="grossProfit" />
-              <input v-model="metric.erp_field" required placeholder="grossProfit" />
+              <input v-model="metric.warehouse_expression" required placeholder="gross_profit" />
+              <input v-model="metric.erp_field" required placeholder="gross_profit 或 data>>gross_profit" />
               <select v-model="metric.aggregation">
                 <option value="sum">sum</option>
                 <option value="count">count</option>
@@ -179,6 +182,16 @@
             {{ running ? '运行中...' : `开始对账（${selectedRuleIds.length}）` }}
           </button>
         </form>
+        <div v-if="failedRuns.length" class="failure-list">
+          <div v-for="failure in failedRuns" :key="failure.run?.id || failure.rule_id" class="failure-item">
+            <div>
+              <strong>{{ failure.rule_name || `规则 ${failure.rule_id}` }}</strong>
+              <span v-if="failure.run">#{{ failure.run.id }}</span>
+            </div>
+            <p>{{ failure.error_message }}</p>
+            <button v-if="failure.run" type="button" class="secondary" @click="selectRun(failure.run)">查看该失败记录</button>
+          </div>
+        </div>
         <div class="check-list">
           <label v-for="rule in rules" :key="rule.id" class="check-item">
             <input v-model="selectedRuleIds" type="checkbox" :value="rule.id" />
@@ -214,13 +227,17 @@
               </select>
             </div>
             <div class="run-list">
-              <label v-for="run in runHistory" :key="run.id" class="run-item">
-                <input v-model="selectedRunIds" type="checkbox" :value="run.id" @change="syncSelectedRuns" />
-                <span>
-                  <strong>{{ run.rule_name }} #{{ run.id }}</strong>
-                  <small>{{ run.start_date }} 至 {{ run.end_date }} · {{ run.status }}</small>
-                </span>
-              </label>
+              <div v-for="run in runHistory" :key="run.id" class="run-item">
+                <label class="run-select">
+                  <input v-model="selectedRunIds" type="checkbox" :value="run.id" @change="syncSelectedRuns" />
+                  <span>
+                    <strong>{{ run.rule_name }} #{{ run.id }}</strong>
+                    <small>{{ run.start_date }} 至 {{ run.end_date }} · {{ run.status }}</small>
+                    <small v-if="run.error_message" class="run-error">{{ run.error_message }}</small>
+                  </span>
+                </label>
+                <button type="button" class="icon-button danger" @click="removeRun(run)">删</button>
+              </div>
               <div v-if="runHistory.length === 0" class="empty">暂无运行记录</div>
             </div>
           </aside>
@@ -303,6 +320,7 @@ import {
   batchRunReconcile,
   createRule,
   deleteRule,
+  deleteRun,
   exportCompareRuns,
   getRun,
   listRules,
@@ -341,7 +359,7 @@ const StoreMappingForm = defineComponent({
             })]),
             h('label', ['名称字段', h('input', {
               value: props.modelValue.name_field,
-              placeholder: 'seller_name',
+              placeholder: 'name',
               onInput: (event) => patch({ name_field: event.target.value }),
             })]),
           ])
@@ -384,6 +402,7 @@ const runHistory = ref([])
 const selectedRuns = ref([])
 const selectedRuleIds = ref([])
 const selectedRunIds = ref([])
+const failedRuns = ref([])
 const running = ref(false)
 const message = ref('')
 const messageType = ref('info')
@@ -399,6 +418,10 @@ const compareFilters = reactive({ period: '', metric: '', rule: '' })
 const filteredRules = computed(() => {
   const keyword = ruleSearch.value.trim().toLowerCase()
   return keyword ? rules.value.filter((rule) => rule.name.toLowerCase().includes(keyword)) : rules.value
+})
+
+const orderProfitStoreFieldWarning = computed(() => {
+  return ruleForm.erp_module_path.toLowerCase().includes('orderprofit') && ruleForm.erp_store_field.trim() === 'sids'
 })
 
 const compareRows = computed(() => {
@@ -582,13 +605,15 @@ async function removeRule(id) {
 
 async function runBatch() {
   running.value = true
+  failedRuns.value = []
   try {
     const result = await batchRunReconcile({ ...runForm, rule_ids: selectedRuleIds.value })
-    notify(`运行完成：成功 ${result.runs.length} 个，失败 ${result.failed_runs.length} 个`, result.failed_runs.length ? 'error' : 'success')
+    failedRuns.value = result.failed_runs || []
+    notify(`运行完成：成功 ${result.runs.length} 个，失败 ${failedRuns.value.length} 个`, failedRuns.value.length ? 'error' : 'success')
     selectedRunIds.value = result.runs.map((run) => run.id)
     selectedRuns.value = result.runs
     await refreshRuns()
-    tab.value = 'result'
+    if (!failedRuns.value.length) tab.value = 'result'
   } catch (error) {
     notify(`运行失败：${error.message}`, 'error')
   } finally {
@@ -600,6 +625,26 @@ async function syncSelectedRuns() {
   selectedRuns.value = []
   for (const runId of selectedRunIds.value) {
     selectedRuns.value.push(await getRun(runId))
+  }
+}
+
+async function selectRun(run) {
+  selectedRunIds.value = [run.id]
+  selectedRuns.value = [await getRun(run.id)]
+  tab.value = 'result'
+  await refreshRuns()
+}
+
+async function removeRun(run) {
+  if (!window.confirm(`确认删除运行记录 #${run.id}？规则不会被删除。`)) return
+  try {
+    await deleteRun(run.id)
+    selectedRunIds.value = selectedRunIds.value.filter((id) => id !== run.id)
+    selectedRuns.value = selectedRuns.value.filter((item) => item.id !== run.id)
+    await refreshRuns()
+    notify(`运行记录 #${run.id} 已删除`, 'success')
+  } catch (error) {
+    notify(`删除失败：${error.message}`, 'error')
   }
 }
 

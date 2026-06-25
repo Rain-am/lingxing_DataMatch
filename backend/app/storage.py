@@ -323,6 +323,12 @@ def get_run(run_id: int) -> Optional[ReconcileRun]:
     return ReconcileRun.parse_obj(data)
 
 
+def delete_run(run_id: int) -> bool:
+    with connect() as conn:
+        cursor = conn.execute("DELETE FROM reconcile_runs WHERE id = ?", (run_id,))
+    return cursor.rowcount > 0
+
+
 def list_runs(
     *,
     rule_id: Optional[int] = None,

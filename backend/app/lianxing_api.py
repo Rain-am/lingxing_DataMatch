@@ -75,6 +75,32 @@ def _decimal(value: Any) -> Decimal:
     return Decimal(str(value))
 
 
+def _field_value(record: dict[str, Any], field: str) -> Any:
+    if not field:
+        return None
+    if field in record:
+        return record.get(field)
+    value: Any = record
+    for part in field.replace(">>", ".").split("."):
+        if not part:
+            continue
+        if isinstance(value, dict):
+            value = value.get(part)
+        else:
+            return None
+    return value
+
+
+def _store_value(record: dict[str, Any], field: str) -> str:
+    value = _field_value(record, field)
+    if isinstance(value, list):
+        if len(value) == 1:
+            value = value[0]
+        else:
+            value = ",".join(str(item) for item in value)
+    return str(value or "")
+
+
 def _date_for_request(value: str, granularity: Granularity) -> str:
     if granularity == "month":
         return value[:7]
@@ -480,14 +506,14 @@ def fetch_erp_aggregate(
     records = api.fetch_module_records(rule, start_date, end_date, granularity)
     result: dict[tuple[str, str, str], Decimal] = {}
     for record in records:
-        period = _period(record.get(rule.erp_date_field), granularity)
-        store = str(record.get(rule.erp_store_field) or "")
+        period = _period(_field_value(record, rule.erp_date_field), granularity)
+        store = _store_value(record, rule.erp_store_field)
         for metric in rule.metrics:
             key = (period, store, metric.name)
             if metric.aggregation == "count":
                 value = Decimal("1")
             else:
-                value = _decimal(record.get(metric.erp_field))
+                value = _decimal(_field_value(record, metric.erp_field))
             result[key] = result.get(key, Decimal("0")) + value
     return result
 
@@ -511,14 +537,14 @@ def fetch_erp_source_values(
         if source.period_mode == "request_month":
             period = str(record.get("_request_period") or "")
         else:
-            period = _period(record.get(source.date_field), granularity)
-        raw_store = str(record.get(source.store_field) or "")
+            period = _period(_field_value(record, source.date_field), granularity)
+        raw_store = _store_value(record, source.store_field)
         store = store_mapping.get(raw_store, raw_store)
         for metric in source.metrics:
             key = (period, store, metric.name, source.name)
             if metric.aggregation == "count":
                 value = Decimal("1")
             else:
-                value = _decimal(record.get(metric.erp_field))
+                value = _decimal(_field_value(record, metric.erp_field))
             result[key] = result.get(key, Decimal("0")) + value
     return result

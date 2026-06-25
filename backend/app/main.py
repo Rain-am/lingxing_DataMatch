@@ -24,7 +24,18 @@ from app.schemas import (
     RunListItem,
     RunRequest,
 )
-from app.storage import create_rule, delete_rule, get_rule, get_run, init_db, list_rules, list_runs, save_run, update_rule
+from app.storage import (
+    create_rule,
+    delete_rule,
+    delete_run,
+    get_rule,
+    get_run,
+    init_db,
+    list_rules,
+    list_runs,
+    save_run,
+    update_rule,
+)
 from app.validation import validate_rule_payload
 
 app = FastAPI(title="Lingxing Data Match", version="0.1.0")
@@ -186,6 +197,13 @@ def api_get_run(run_id: int) -> ReconcileRun:
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
     return run
+
+
+@app.delete("/api/reconcile/runs/{run_id}")
+def api_delete_run(run_id: int) -> dict[str, bool]:
+    if not delete_run(run_id):
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"ok": True}
 
 
 @app.get("/api/reconcile/runs/{run_id}/export")

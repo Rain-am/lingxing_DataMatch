@@ -119,6 +119,14 @@ button.danger,
   background: #fde1e1;
 }
 
+.inline-warning {
+  border: 1px solid #f5c2c2;
+  border-radius: 6px;
+  padding: 9px 11px;
+  color: #8a1f1f;
+  background: #fff1f1;
+}
+
 .panel {
   border: 1px solid #dbe3ea;
   border-radius: 8px;
@@ -394,6 +402,17 @@ textarea {
   background: #fbfcfd;
 }
 
+.run-item {
+  justify-content: space-between;
+}
+
+.run-select {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .check-item input,
 .run-item input {
   width: auto;
@@ -404,6 +423,45 @@ textarea {
   display: block;
   margin-top: 3px;
   color: #667789;
+}
+
+.run-error {
+  max-width: 260px;
+  color: #9b1c1c !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.failure-item {
+  border: 1px solid #f5c2c2;
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  color: #8a1f1f;
+  background: #fff1f1;
+}
+
+.failure-item div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.failure-item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.failure-item button {
+  justify-self: start;
 }
 
 .result-panel {
