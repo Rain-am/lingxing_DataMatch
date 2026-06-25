@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from app.schemas import RuleBase, Source
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+ERP_FIELD_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:(?:\.|>>)[A-Za-z_][A-Za-z0-9_]*)*$")
 MODULE_PATH_RE = re.compile(r"^/?[A-Za-z0-9_./-]+$")
 EXPRESSION_RE = re.compile(r"^[A-Za-z0-9_`().,+\-*/\s]+$")
 
@@ -12,6 +13,11 @@ EXPRESSION_RE = re.compile(r"^[A-Za-z0-9_`().,+\-*/\s]+$")
 def validate_identifier(value: str, label: str) -> None:
     if not IDENTIFIER_RE.match(value):
         raise HTTPException(status_code=400, detail=f"{label} must be a simple SQL identifier")
+
+
+def validate_erp_field_path(value: str, label: str) -> None:
+    if not ERP_FIELD_PATH_RE.match(value):
+        raise HTTPException(status_code=400, detail=f"{label} must be an ERP field path like field, data.field, or data>>field")
 
 
 def validate_expression(value: str, label: str) -> None:
@@ -59,5 +65,5 @@ def validate_source(source: Source) -> None:
     else:
         validate_module_path(source.table_or_path)
         if source.period_mode == "response_field":
-            validate_identifier(source.date_field, f"source {source.name} date_field")
-        validate_identifier(source.store_field, f"source {source.name} store_field")
+            validate_erp_field_path(source.date_field, f"source {source.name} date_field")
+        validate_erp_field_path(source.store_field, f"source {source.name} store_field")
