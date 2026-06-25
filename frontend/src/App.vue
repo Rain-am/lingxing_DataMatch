@@ -255,7 +255,7 @@
             </div>
           </aside>
 
-          <section class="compare-area">
+          <section class="compare-area" @click="closeFilterMenu">
             <div class="summary-strip">
               <div>
                 <span>已选结果</span>
@@ -271,18 +271,44 @@
               </div>
             </div>
             <div class="filters">
-              <label class="filter-select">
-                月份
-                <select v-model="compareFilters.periods" multiple>
-                  <option v-for="period in availablePeriods" :key="period" :value="period">{{ period }}</option>
-                </select>
-              </label>
-              <label class="filter-select">
-                指标
-                <select v-model="compareFilters.metrics" multiple>
-                  <option v-for="metric in availableMetrics" :key="metric" :value="metric">{{ metric }}</option>
-                </select>
-              </label>
+              <div class="dropdown-filter">
+                <button type="button" class="filter-button" @click.stop="toggleFilterMenu('period')">
+                  <span>月份</span>
+                  <strong>{{ periodFilterLabel }}</strong>
+                </button>
+                <div v-if="openFilterMenu === 'period'" class="filter-menu" @click.stop>
+                  <button type="button" class="filter-menu-option all-option" @click="clearFilter('periods')">
+                    全部月份
+                  </button>
+                  <label v-for="period in availablePeriods" :key="period" class="filter-menu-option">
+                    <input
+                      type="checkbox"
+                      :checked="compareFilters.periods.includes(period)"
+                      @change="toggleFilterValue('periods', period)"
+                    />
+                    <span>{{ period }}</span>
+                  </label>
+                </div>
+              </div>
+              <div class="dropdown-filter">
+                <button type="button" class="filter-button" @click.stop="toggleFilterMenu('metric')">
+                  <span>指标</span>
+                  <strong>{{ metricFilterLabel }}</strong>
+                </button>
+                <div v-if="openFilterMenu === 'metric'" class="filter-menu" @click.stop>
+                  <button type="button" class="filter-menu-option all-option" @click="clearFilter('metrics')">
+                    全部指标
+                  </button>
+                  <label v-for="metric in availableMetrics" :key="metric" class="filter-menu-option">
+                    <input
+                      type="checkbox"
+                      :checked="compareFilters.metrics.includes(metric)"
+                      @change="toggleFilterValue('metrics', metric)"
+                    />
+                    <span>{{ metric }}</span>
+                  </label>
+                </div>
+              </div>
               <input v-model="compareFilters.rule" placeholder="筛选规则名" />
             </div>
             <div v-if="selectedRunsWithoutSummary.length" class="inline-warning">
@@ -446,6 +472,7 @@ const messageType = ref('info')
 const editingRuleId = ref(null)
 const ruleSearch = ref('')
 const expandedKey = ref('')
+const openFilterMenu = ref('')
 const erpRequestConfigText = ref(JSON.stringify(defaultRequestConfig(), null, 2))
 const ruleForm = reactive(emptyRule())
 const runForm = reactive({ start_date: '', end_date: '', granularity: 'month' })
@@ -507,6 +534,9 @@ const selectedRunsWithoutSummary = computed(() => {
   return selectedRuns.value.filter((run) => run.status === 'success' && !(run.summary_rows || []).length)
 })
 
+const periodFilterLabel = computed(() => filterLabel(compareFilters.periods, '全部月份', '月份'))
+const metricFilterLabel = computed(() => filterLabel(compareFilters.metrics, '全部指标', '指标'))
+
 const filteredCompareRows = computed(() => {
   const ruleKeyword = compareFilters.rule.trim().toLowerCase()
   const allowedRuleNames = ruleKeyword
@@ -526,6 +556,10 @@ watch(availablePeriods, (periods) => {
 
 watch(availableMetrics, (metrics) => {
   compareFilters.metrics = compareFilters.metrics.filter((metric) => metrics.includes(metric))
+})
+
+watch(selectedRuns, () => {
+  openFilterMenu.value = ''
 })
 
 watch(() => ruleForm.erp_period_mode, (mode) => {
@@ -757,6 +791,32 @@ async function removeRun(run) {
 
 function normalizeRunIds(ids) {
   return Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))))
+}
+
+function filterLabel(values, allLabel, unit) {
+  if (!values.length) return allLabel
+  if (values.length === 1) return values[0]
+  return `已选 ${values.length} 个${unit}`
+}
+
+function toggleFilterMenu(menu) {
+  openFilterMenu.value = openFilterMenu.value === menu ? '' : menu
+}
+
+function closeFilterMenu() {
+  openFilterMenu.value = ''
+}
+
+function clearFilter(key) {
+  compareFilters[key] = []
+  openFilterMenu.value = ''
+}
+
+function toggleFilterValue(key, value) {
+  const values = compareFilters[key]
+  compareFilters[key] = values.includes(value)
+    ? values.filter((item) => item !== value)
+    : [...values, value]
 }
 
 function buildCompareRows(allowedRuleNames = null) {
