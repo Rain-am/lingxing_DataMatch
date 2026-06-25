@@ -61,16 +61,22 @@ _batch_jobs: dict[str, BatchRunJob] = {}
 _batch_jobs_lock = Lock()
 
 
+def _copy_batch_job(job: BatchRunJob) -> BatchRunJob:
+    if hasattr(job, "model_copy"):
+        return job.model_copy(deep=True)
+    return job.copy(deep=True)
+
+
 def _save_batch_job(job: BatchRunJob) -> None:
     job.updated_at = datetime.now()
     with _batch_jobs_lock:
-        _batch_jobs[job.job_id] = job.model_copy(deep=True)
+        _batch_jobs[job.job_id] = _copy_batch_job(job)
 
 
 def _get_batch_job(job_id: str) -> Optional[BatchRunJob]:
     with _batch_jobs_lock:
         job = _batch_jobs.get(job_id)
-        return job.model_copy(deep=True) if job else None
+        return _copy_batch_job(job) if job else None
 
 
 @app.on_event("startup")
