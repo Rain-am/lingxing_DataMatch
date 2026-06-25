@@ -167,6 +167,13 @@ class BatchRunJob(BaseModel):
     status: Literal["queued", "running", "completed"]
     total: int
     completed: int = 0
+    total_steps: int = 0
+    done_steps: int = 0
+    progress_percent: int = 0
+    stage: str = ""
+    detail: str = ""
+    current_period: str = ""
+    current_page: Optional[int] = None
     current_rule_id: Optional[int] = None
     current_rule_name: str = ""
     runs: list[ReconcileRun] = Field(default_factory=list)

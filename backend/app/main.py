@@ -79,6 +79,28 @@ def _get_batch_job(job_id: str) -> Optional[BatchRunJob]:
         return _copy_batch_job(job) if job else None
 
 
+def _apply_job_progress(
+    job: BatchRunJob,
+    *,
+    stage: str = "",
+    detail: str = "",
+    advance: int = 0,
+    current_period: str = "",
+    current_page: Optional[int] = None,
+) -> None:
+    if advance:
+        job.done_steps = min(job.total_steps or job.done_steps + advance, job.done_steps + advance)
+    if stage:
+        job.stage = stage
+    if detail:
+        job.detail = detail
+    job.current_period = current_period
+    job.current_page = current_page
+    if job.total_steps:
+        job.progress_percent = min(100, int(job.done_steps * 100 / job.total_steps))
+    _save_batch_job(job)
+
+
 @app.on_event("startup")
 def startup() -> None:
     init_db()
@@ -124,14 +146,43 @@ def api_delete_rule(rule_id: int) -> dict[str, bool]:
     return {"ok": True}
 
 
-def _run_rule(rule: Rule, start_date: date, end_date: date, granularity: str) -> ReconcileRun:
+def _month_step_count(start_date: date, end_date: date) -> int:
+    months = (end_date.year - start_date.year) * 12 + end_date.month - start_date.month + 1
+    return max(months, 1)
+
+
+def _rule_progress_steps(rule: Rule, start_date: date, end_date: date) -> int:
+    sources = rule.sources or []
+    if not sources:
+        sources = []
+        if rule.warehouse_table:
+            sources.append(type("SourceLike", (), {"type": "warehouse", "period_mode": "response_field"})())
+        if rule.erp_module_path:
+            sources.append(type("SourceLike", (), {"type": "erp", "period_mode": "response_field"})())
+    source_steps = 0
+    for source in sources:
+        if source.type == "erp" and source.period_mode == "request_month":
+            source_steps += _month_step_count(start_date, end_date)
+        else:
+            source_steps += 1
+    return max(source_steps + 2, 1)
+
+
+def _run_rule(
+    rule: Rule,
+    start_date: date,
+    end_date: date,
+    granularity: str,
+    progress_callback=None,
+) -> ReconcileRun:
     rows, summary_rows = build_reconcile_result(
         rule,
         start_date.isoformat(),
         end_date.isoformat(),
         granularity,
+        progress_callback=progress_callback,
     )
-    return save_run(
+    run = save_run(
         rule_id=rule.id,
         rule_name=rule.name,
         start_date=start_date,
@@ -140,6 +191,9 @@ def _run_rule(rule: Rule, start_date: date, end_date: date, granularity: str) ->
         rows=rows,
         summary_rows=summary_rows,
     )
+    if progress_callback:
+        progress_callback(stage="保存结果", detail=f"运行记录 #{run.id}", advance=1)
+    return run
 
 
 @app.post("/api/reconcile/run", response_model=ReconcileRun)
@@ -199,16 +253,30 @@ def _execute_batch_job(job_id: str, payload: BatchRunRequest) -> None:
     _save_batch_job(job)
     for rule_id in payload.rule_ids:
         rule = get_rule(rule_id)
+        rule_steps = _rule_progress_steps(rule, payload.start_date, payload.end_date) if rule else 1
+        rule_start_steps = job.done_steps
         job.current_rule_id = rule_id
         job.current_rule_name = rule.name if rule else ""
-        _save_batch_job(job)
+        _apply_job_progress(job, stage="准备运行", detail=job.current_rule_name or f"规则 {rule_id}")
         if not rule:
             job.failed_runs.append(BatchRunFailure(rule_id=rule_id, rule_name="", error_message="rule not found"))
+            _apply_job_progress(job, stage="规则失败", detail="rule not found", advance=1)
             job.completed += 1
             _save_batch_job(job)
             continue
         try:
-            job.runs.append(_run_rule(rule, payload.start_date, payload.end_date, payload.granularity))
+            def progress_callback(**kwargs) -> None:
+                _apply_job_progress(job, **kwargs)
+
+            job.runs.append(
+                _run_rule(
+                    rule,
+                    payload.start_date,
+                    payload.end_date,
+                    payload.granularity,
+                    progress_callback=progress_callback,
+                )
+            )
         except Exception as exc:
             failed_run = save_run(
                 rule_id=rule.id,
@@ -224,11 +292,20 @@ def _execute_batch_job(job_id: str, payload: BatchRunRequest) -> None:
                 BatchRunFailure(rule_id=rule.id, rule_name=rule.name, run=failed_run, error_message=str(exc))
             )
         finally:
+            if job.done_steps < rule_start_steps + rule_steps:
+                job.done_steps = min(job.total_steps, rule_start_steps + rule_steps)
+                job.progress_percent = min(100, int(job.done_steps * 100 / job.total_steps)) if job.total_steps else 0
             job.completed += 1
             _save_batch_job(job)
     job.status = "completed"
     job.current_rule_id = None
     job.current_rule_name = ""
+    job.stage = "完成"
+    job.detail = "全部规则运行完成"
+    job.current_period = ""
+    job.current_page = None
+    job.done_steps = job.total_steps
+    job.progress_percent = 100
     job.finished_at = datetime.now()
     _save_batch_job(job)
 
@@ -236,10 +313,15 @@ def _execute_batch_job(job_id: str, payload: BatchRunRequest) -> None:
 @app.post("/api/reconcile/batch-run/jobs", response_model=BatchRunJob)
 def api_create_batch_run_job(payload: BatchRunRequest) -> BatchRunJob:
     now = datetime.now()
+    total_steps = 0
+    for rule_id in payload.rule_ids:
+        rule = get_rule(rule_id)
+        total_steps += _rule_progress_steps(rule, payload.start_date, payload.end_date) if rule else 1
     job = BatchRunJob(
         job_id=uuid4().hex,
         status="queued",
         total=len(payload.rule_ids),
+        total_steps=total_steps,
         created_at=now,
         updated_at=now,
     )

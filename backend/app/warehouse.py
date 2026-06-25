@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from decimal import Decimal
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator, Optional
 
 import pymysql
 from pymysql.cursors import DictCursor
@@ -74,6 +74,7 @@ def fetch_warehouse_source_values(
     start_date: str,
     end_date: str,
     granularity: Granularity,
+    progress_callback: Optional[Callable[..., None]] = None,
 ) -> dict[tuple[str, str, str, str], Decimal]:
     metric_selects: list[str] = []
     for index, metric in enumerate(source.metrics):
@@ -99,11 +100,17 @@ def fetch_warehouse_source_values(
         ORDER BY period, store
     """
 
+    if progress_callback:
+        progress_callback(stage="数仓取数", detail=f"{source.name} 查询汇总数据")
+
     with _warehouse_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(sql, (start_date, end_date))
             rows: list[dict[str, Any]] = cursor.fetchall()
         store_mapping = fetch_store_mapping_for_source(source, connection)
+
+    if progress_callback:
+        progress_callback(stage="数仓取数", detail=f"{source.name} 已取得 {len(rows)} 行", advance=1)
 
     result: dict[tuple[str, str, str, str], Decimal] = {}
     for row in rows:

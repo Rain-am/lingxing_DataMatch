@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional
+from typing import Callable, Optional
 
 from app.schemas import Granularity, ReconcileRow, ReconcileStatus, ReconcileSummaryRow, Rule, Source
+
+
+ProgressCallback = Callable[..., None]
 
 
 def _rate(diff: Decimal, erp_value: Decimal) -> Optional[Decimal]:
@@ -69,17 +72,18 @@ def collect_source_values(
     start_date: str,
     end_date: str,
     granularity: Granularity,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> dict[tuple[str, str, str, str], Decimal]:
     values: dict[tuple[str, str, str, str], Decimal] = {}
     for source in _legacy_sources(rule):
         if source.type == "warehouse":
             from app.warehouse import fetch_warehouse_source_values
 
-            source_values = fetch_warehouse_source_values(source, start_date, end_date, granularity)
+            source_values = fetch_warehouse_source_values(source, start_date, end_date, granularity, progress_callback)
         else:
             from app.lianxing_api import fetch_erp_source_values
 
-            source_values = fetch_erp_source_values(source, start_date, end_date, granularity)
+            source_values = fetch_erp_source_values(source, start_date, end_date, granularity, progress_callback=progress_callback)
         values.update(source_values)
     return values
 
@@ -155,9 +159,10 @@ def build_reconcile_rows(
     granularity: Granularity,
     warehouse_values: Optional[dict[tuple[str, str, str], Decimal]] = None,
     erp_values: Optional[dict[tuple[str, str, str], Decimal]] = None,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> list[ReconcileRow]:
     if rule.sources and warehouse_values is None and erp_values is None:
-        values = collect_source_values(rule, start_date, end_date, granularity)
+        values = collect_source_values(rule, start_date, end_date, granularity, progress_callback)
         return build_multisource_rows(rule, values)
 
     warehouse = warehouse_values
@@ -203,6 +208,9 @@ def build_reconcile_result(
     start_date: str,
     end_date: str,
     granularity: Granularity,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> tuple[list[ReconcileRow], list[ReconcileSummaryRow]]:
-    rows = build_reconcile_rows(rule, start_date, end_date, granularity)
+    rows = build_reconcile_rows(rule, start_date, end_date, granularity, progress_callback=progress_callback)
+    if progress_callback:
+        progress_callback(stage="聚合结果", detail="生成汇总结果", advance=1)
     return rows, build_summary_rows(rule, rows)

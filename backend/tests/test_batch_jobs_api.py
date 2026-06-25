@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from time import sleep
 
 from fastapi.testclient import TestClient
 
@@ -26,7 +27,11 @@ def _rule(rule_id: int) -> Rule:
     )
 
 
-def _run(rule: Rule, start_date: date, end_date: date, granularity: str) -> ReconcileRun:
+def _run(rule: Rule, start_date: date, end_date: date, granularity: str, progress_callback=None) -> ReconcileRun:
+    if progress_callback:
+        progress_callback(stage="测试取数", detail=rule.name, advance=1)
+        progress_callback(stage="测试聚合", detail=rule.name, advance=1)
+        progress_callback(stage="测试保存", detail=rule.name, advance=1)
     return ReconcileRun(
         id=rule.id + 100,
         rule_id=rule.id,
@@ -62,6 +67,8 @@ def test_batch_run_job_completes(monkeypatch) -> None:
         job = client.get(f"/api/reconcile/batch-run/jobs/{job_id}").json()
         if job["status"] == "completed":
             break
+        sleep(0.01)
     assert job["status"] == "completed"
     assert job["completed"] == 2
+    assert job["progress_percent"] == 100
     assert [run["rule_id"] for run in job["runs"]] == [1, 2]

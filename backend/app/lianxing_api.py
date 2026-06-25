@@ -10,7 +10,7 @@ import urllib.request
 from datetime import date, datetime
 from calendar import monthrange
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlencode, urlsplit
 
 from app.config import Settings, get_settings, update_env_values
@@ -404,6 +404,7 @@ class LingxingApiClient:
         end_date: str,
         granularity: Granularity,
         page_size: int = 200,
+        progress_callback: Optional[Callable[..., None]] = None,
     ) -> list[dict[str, Any]]:
         if not self.settings.lingxing_api_base_url:
             raise RuntimeError("LINGXING_API_BASE_URL is not configured")
@@ -419,7 +420,18 @@ class LingxingApiClient:
             else [("", start_date, end_date)]
         )
         for request_period, window_start, window_end in windows:
-            records.extend(self._fetch_window_records(url, config, window_start, window_end, granularity, page_size, request_period))
+            records.extend(
+                self._fetch_window_records(
+                    url,
+                    config,
+                    window_start,
+                    window_end,
+                    granularity,
+                    page_size,
+                    request_period,
+                    progress_callback,
+                )
+            )
         return records
 
     def _fetch_window_records(
@@ -431,6 +443,7 @@ class LingxingApiClient:
         granularity: Granularity,
         page_size: int,
         request_period: str = "",
+        progress_callback: Optional[Callable[..., None]] = None,
     ) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         extra_params = config.get("extraParams") or {}
@@ -454,6 +467,19 @@ class LingxingApiClient:
         offset = int(config.get("offsetStart") or 0)
 
         while True:
+            if progress_callback:
+                period_label = request_period or ""
+                page_label = offset // effective_page_size + 1 if pagination_mode == "offset" else page
+                detail_parts = []
+                if period_label:
+                    detail_parts.append(period_label)
+                detail_parts.append(f"第 {page_label} 页")
+                progress_callback(
+                    stage="ERP取数",
+                    detail="，".join(detail_parts),
+                    current_period=period_label,
+                    current_page=page_label,
+                )
             payload = dict(extra_params)
             payload[start_param] = start_date if request_period else _date_for_request(start_date, granularity)
             payload[end_param] = end_date if request_period else _date_for_request(end_date, granularity)
@@ -476,6 +502,10 @@ class LingxingApiClient:
                 break
             page += 1
             offset += effective_page_size
+        if progress_callback:
+            period_label = request_period or ""
+            detail = f"{period_label} 完成，共 {len(records)} 条" if period_label else f"完成，共 {len(records)} 条"
+            progress_callback(stage="ERP取数", detail=detail, current_period=period_label, current_page=None, advance=1)
         return records
 
     def _post_json(self, url: str, payload: dict[str, Any]) -> Any:
@@ -574,9 +604,19 @@ def fetch_erp_source_values(
     end_date: str,
     granularity: Granularity,
     client: Optional[LingxingApiClient] = None,
+    progress_callback: Optional[Callable[..., None]] = None,
 ) -> dict[tuple[str, str, str, str], Decimal]:
     api = client or LingxingApiClient()
-    records = api.fetch_source_records(source, start_date, end_date, granularity)
+    if progress_callback:
+        records = api.fetch_source_records(
+            source,
+            start_date,
+            end_date,
+            granularity,
+            progress_callback=progress_callback,
+        )
+    else:
+        records = api.fetch_source_records(source, start_date, end_date, granularity)
     store_mapping: dict[str, str] = {}
     if source.store_mapping.enabled:
         from app.warehouse import fetch_store_mapping

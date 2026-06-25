@@ -185,13 +185,16 @@
         <div v-if="currentJob" class="job-progress">
           <div class="job-progress-head">
             <strong>{{ currentJob.status === 'completed' ? '运行完成' : '后台运行中' }}</strong>
-            <span>{{ currentJob.completed }} / {{ currentJob.total }}</span>
+            <span>{{ currentJob.progress_percent || 0 }}%</span>
           </div>
-          <progress :value="currentJob.completed" :max="currentJob.total || 1"></progress>
-          <p v-if="currentJob.status !== 'completed' && currentJob.current_rule_name">
-            正在处理：{{ currentJob.current_rule_name }}
-          </p>
-          <p v-else-if="currentJob.status !== 'completed'">
+          <progress :value="currentJob.progress_percent || 0" max="100"></progress>
+          <div class="job-progress-meta">
+            <span v-if="currentJob.current_rule_name">规则：{{ currentJob.current_rule_name }}</span>
+            <span v-if="currentJob.stage">阶段：{{ currentJob.stage }}</span>
+            <span v-if="currentJob.detail">明细：{{ currentJob.detail }}</span>
+            <span v-if="currentJob.total_steps">{{ currentJob.done_steps }} / {{ currentJob.total_steps }} 步</span>
+          </div>
+          <p v-if="currentJob.status !== 'completed' && !currentJob.stage">
             任务已提交，页面会自动刷新进度。
           </p>
         </div>
@@ -490,7 +493,8 @@ const orderProfitStoreFieldWarning = computed(() => {
 
 const runButtonText = computed(() => {
   if (!currentJob.value) return '运行中...'
-  return `运行中 ${currentJob.value.completed}/${currentJob.value.total}`
+  const percent = currentJob.value.progress_percent
+  return Number.isFinite(percent) ? `运行中 ${percent}%` : '运行中...'
 })
 
 const compareRows = computed(() => {
