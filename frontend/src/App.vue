@@ -271,9 +271,22 @@
               </div>
             </div>
             <div class="filters">
-              <input v-model="compareFilters.period" placeholder="筛选月份" />
-              <input v-model="compareFilters.metric" placeholder="筛选指标" />
+              <label class="filter-select">
+                月份
+                <select v-model="compareFilters.periods" multiple>
+                  <option v-for="period in availablePeriods" :key="period" :value="period">{{ period }}</option>
+                </select>
+              </label>
+              <label class="filter-select">
+                指标
+                <select v-model="compareFilters.metrics" multiple>
+                  <option v-for="metric in availableMetrics" :key="metric" :value="metric">{{ metric }}</option>
+                </select>
+              </label>
               <input v-model="compareFilters.rule" placeholder="筛选规则名" />
+            </div>
+            <div v-if="selectedRunsWithoutSummary.length" class="inline-warning">
+              {{ selectedRunsWithoutSummary.map((run) => `${run.rule_name} #${run.id}`).join('、') }} 无汇总数据，请重新运行该规则后再查看。
             </div>
             <div class="table-wrap">
               <table>
@@ -437,7 +450,7 @@ const erpRequestConfigText = ref(JSON.stringify(defaultRequestConfig(), null, 2)
 const ruleForm = reactive(emptyRule())
 const runForm = reactive({ start_date: '', end_date: '', granularity: 'month' })
 const runFilters = reactive({ rule_id: '', status: '' })
-const compareFilters = reactive({ period: '', metric: '', rule: '' })
+const compareFilters = reactive({ periods: [], metrics: [], rule: '' })
 
 const filteredRules = computed(() => {
   const keyword = ruleSearch.value.trim().toLowerCase()
@@ -470,6 +483,30 @@ const compareRows = computed(() => {
   return Array.from(groups.values()).sort((a, b) => a.period.localeCompare(b.period) || a.metric.localeCompare(b.metric, 'zh-CN'))
 })
 
+const availablePeriods = computed(() => {
+  const periods = new Set()
+  for (const run of selectedRuns.value) {
+    for (const row of run.summary_rows || []) {
+      periods.add(formatPeriodMonth(row.period))
+    }
+  }
+  return Array.from(periods).sort()
+})
+
+const availableMetrics = computed(() => {
+  const metrics = new Set()
+  for (const run of selectedRuns.value) {
+    for (const row of run.summary_rows || []) {
+      metrics.add(row.metric)
+    }
+  }
+  return Array.from(metrics).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+})
+
+const selectedRunsWithoutSummary = computed(() => {
+  return selectedRuns.value.filter((run) => run.status === 'success' && !(run.summary_rows || []).length)
+})
+
 const filteredCompareRows = computed(() => {
   const ruleKeyword = compareFilters.rule.trim().toLowerCase()
   const allowedRuleNames = ruleKeyword
@@ -478,9 +515,17 @@ const filteredCompareRows = computed(() => {
   const rows = allowedRuleNames ? buildCompareRows(allowedRuleNames) : compareRows.value
   return rows
     .filter((row) => {
-      return (!compareFilters.period || row.period.includes(compareFilters.period))
-        && (!compareFilters.metric || row.metric.includes(compareFilters.metric))
+      return (!compareFilters.periods.length || compareFilters.periods.includes(row.period))
+        && (!compareFilters.metrics.length || compareFilters.metrics.includes(row.metric))
     })
+})
+
+watch(availablePeriods, (periods) => {
+  compareFilters.periods = compareFilters.periods.filter((period) => periods.includes(period))
+})
+
+watch(availableMetrics, (metrics) => {
+  compareFilters.metrics = compareFilters.metrics.filter((metric) => metrics.includes(metric))
 })
 
 watch(() => ruleForm.erp_period_mode, (mode) => {
@@ -680,14 +725,18 @@ function clearJobPolling() {
 }
 
 async function syncSelectedRuns() {
-  selectedRuns.value = []
-  for (const runId of selectedRunIds.value) {
-    selectedRuns.value.push(await getRun(runId))
+  const runIds = normalizeRunIds(selectedRunIds.value)
+  selectedRunIds.value = runIds
+  try {
+    selectedRuns.value = await Promise.all(runIds.map((runId) => getRun(runId)))
+  } catch (error) {
+    selectedRuns.value = []
+    notify(`加载运行结果失败：${error.message}。请刷新历史记录后重试。`, 'error')
   }
 }
 
 async function selectRun(run) {
-  selectedRunIds.value = [run.id]
+  selectedRunIds.value = [Number(run.id)]
   selectedRuns.value = [await getRun(run.id)]
   tab.value = 'result'
   await refreshRuns()
@@ -704,6 +753,10 @@ async function removeRun(run) {
   } catch (error) {
     notify(`删除失败：${error.message}`, 'error')
   }
+}
+
+function normalizeRunIds(ids) {
+  return Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))))
 }
 
 function buildCompareRows(allowedRuleNames = null) {
@@ -766,7 +819,10 @@ function detailRows(summary) {
       const warehouse = row.hasWarehouseSource ? row.warehouse : row.fallbackWarehouse
       return { store: row.store, warehouse, erp: row.erp, diff: warehouse - row.erp }
     })
-    .sort((a, b) => String(a.store).localeCompare(String(b.store), 'zh-CN'))
+    .sort((a, b) => {
+      const diffOrder = Math.abs(b.diff) - Math.abs(a.diff)
+      return diffOrder || String(a.store).localeCompare(String(b.store), 'zh-CN')
+    })
 }
 
 function isWarehouseSource(source) {

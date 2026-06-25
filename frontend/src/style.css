@@ -550,6 +550,17 @@ textarea {
   max-width: 220px;
 }
 
+.filter-select {
+  width: 220px;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.filter-select select[multiple] {
+  min-height: 74px;
+  padding: 6px;
+}
+
 .table-wrap {
   overflow: auto;
   border: 1px solid #dbe3ea;
