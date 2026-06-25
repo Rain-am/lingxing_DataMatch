@@ -268,7 +268,9 @@
                   <tr>
                     <th>月份</th>
                     <th>指标</th>
-                    <th v-for="run in selectedRuns" :key="run.id" class="number">{{ run.rule_name }} #{{ run.id }}</th>
+                    <th class="number">数仓</th>
+                    <th class="number">ERP</th>
+                    <th class="number">差异</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -277,23 +279,29 @@
                     <tr class="summary-row" @click="toggleExpand(row.key)">
                       <td>{{ row.period }}</td>
                       <td>{{ row.metric }}</td>
-                      <td v-for="run in selectedRuns" :key="run.id" class="number">{{ formatNumber(row.values[run.id]) }}</td>
+                      <td class="number">{{ formatNumber(row.warehouse) }}</td>
+                      <td class="number">{{ formatNumber(row.erp) }}</td>
+                      <td class="number">{{ formatNumber(row.diff) }}</td>
                       <td class="drill-action">{{ expandedKey === row.key ? '收起' : '店铺明细' }}</td>
                     </tr>
                     <tr v-if="expandedKey === row.key" class="detail-row">
-                      <td :colspan="3 + selectedRuns.length">
+                      <td colspan="6">
                         <div class="detail-table">
                           <table>
                             <thead>
                               <tr>
                                 <th>店铺</th>
-                                <th v-for="run in selectedRuns" :key="run.id" class="number">{{ run.rule_name }} #{{ run.id }}</th>
+                                <th class="number">数仓</th>
+                                <th class="number">ERP</th>
+                                <th class="number">差异</th>
                               </tr>
                             </thead>
                             <tbody>
                               <tr v-for="detail in detailRows(row)" :key="`${row.key}-${detail.store}`">
                                 <td>{{ detail.store || '-' }}</td>
-                                <td v-for="run in selectedRuns" :key="run.id" class="number">{{ formatNumber(detail.values[run.id]) }}</td>
+                                <td class="number">{{ formatNumber(detail.warehouse) }}</td>
+                                <td class="number">{{ formatNumber(detail.erp) }}</td>
+                                <td class="number">{{ formatNumber(detail.diff) }}</td>
                               </tr>
                             </tbody>
                           </table>
@@ -302,7 +310,7 @@
                     </tr>
                   </template>
                   <tr v-if="filteredCompareRows.length === 0">
-                    <td :colspan="3 + selectedRuns.length" class="empty-table">请选择运行结果，或调整筛选条件</td>
+                    <td colspan="6" class="empty-table">请选择运行结果，或调整筛选条件</td>
                   </tr>
                 </tbody>
               </table>
@@ -428,9 +436,14 @@ const compareRows = computed(() => {
   const groups = new Map()
   for (const run of selectedRuns.value) {
     for (const row of run.summary_rows || []) {
-      const key = `${row.period}__${row.metric}`
-      if (!groups.has(key)) groups.set(key, { key, period: row.period, metric: row.metric, values: {} })
-      groups.get(key).values[run.id] = summaryValue(row)
+      const period = formatPeriodMonth(row.period)
+      const key = `${period}__${row.metric}`
+      if (!groups.has(key)) groups.set(key, { key, period, metric: row.metric, warehouse: 0, erp: 0, diff: 0 })
+      const group = groups.get(key)
+      const values = sourceAmounts(row)
+      group.warehouse += values.warehouse
+      group.erp += values.erp
+      group.diff += values.diff
     }
   }
   return Array.from(groups.values()).sort((a, b) => a.period.localeCompare(b.period) || a.metric.localeCompare(b.metric, 'zh-CN'))
@@ -438,18 +451,14 @@ const compareRows = computed(() => {
 
 const filteredCompareRows = computed(() => {
   const ruleKeyword = compareFilters.rule.trim().toLowerCase()
-  const allowedRunIds = ruleKeyword
-    ? new Set(selectedRuns.value.filter((run) => run.rule_name.toLowerCase().includes(ruleKeyword)).map((run) => run.id))
+  const allowedRuleNames = ruleKeyword
+    ? new Set(selectedRuns.value.filter((run) => run.rule_name.toLowerCase().includes(ruleKeyword)).map((run) => run.rule_name))
     : null
-  return compareRows.value
-    .map((row) => {
-      if (!allowedRunIds) return row
-      return { ...row, values: Object.fromEntries(Object.entries(row.values).filter(([runId]) => allowedRunIds.has(Number(runId)))) }
-    })
+  const rows = allowedRuleNames ? buildCompareRows(allowedRuleNames) : compareRows.value
+  return rows
     .filter((row) => {
       return (!compareFilters.period || row.period.includes(compareFilters.period))
         && (!compareFilters.metric || row.metric.includes(compareFilters.metric))
-        && Object.keys(row.values).length > 0
     })
 })
 
@@ -648,10 +657,34 @@ async function removeRun(run) {
   }
 }
 
-function summaryValue(row) {
-  if (row.values?.ERP !== undefined) return Number(row.values.ERP || 0)
-  if (row.values) return Object.values(row.values).reduce((sum, value) => sum + Number(value || 0), 0)
-  return Number(row.erp_value ?? row.value ?? 0)
+function buildCompareRows(allowedRuleNames = null) {
+  const groups = new Map()
+  for (const run of selectedRuns.value) {
+    if (allowedRuleNames && !allowedRuleNames.has(run.rule_name)) continue
+    for (const row of run.summary_rows || []) {
+      const period = formatPeriodMonth(row.period)
+      const key = `${period}__${row.metric}`
+      if (!groups.has(key)) groups.set(key, { key, period, metric: row.metric, warehouse: 0, erp: 0, diff: 0 })
+      const group = groups.get(key)
+      const values = sourceAmounts(row)
+      group.warehouse += values.warehouse
+      group.erp += values.erp
+      group.diff += values.diff
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => a.period.localeCompare(b.period) || a.metric.localeCompare(b.metric, 'zh-CN'))
+}
+
+function sourceAmounts(row) {
+  const values = row.values || {}
+  const warehouse = Number(values['数仓'] ?? values['鏁颁粨'] ?? values.warehouse ?? values.Warehouse ?? 0)
+  const erp = Number(values.ERP ?? values.erp ?? 0)
+  const diff = Number(row.diffs?.ERP ?? row.diffs?.erp ?? (warehouse - erp))
+  return { warehouse, erp, diff }
+}
+
+function formatPeriodMonth(value) {
+  return String(value || '').slice(0, 7)
 }
 
 function toggleExpand(key) {
@@ -662,12 +695,37 @@ function detailRows(summary) {
   const groups = new Map()
   for (const run of selectedRuns.value) {
     for (const row of run.rows || []) {
-      if (row.period !== summary.period || row.metric !== summary.metric) continue
-      if (!groups.has(row.store)) groups.set(row.store, { store: row.store, values: {} })
-      groups.get(row.store).values[run.id] = (groups.get(row.store).values[run.id] || 0) + Number(row.value ?? row.erp_value ?? 0)
+      if (formatPeriodMonth(row.period) !== summary.period || row.metric !== summary.metric) continue
+      if (!groups.has(row.store)) {
+        groups.set(row.store, { store: row.store, warehouse: 0, erp: 0, fallbackWarehouse: 0, hasWarehouseSource: false })
+      }
+      const group = groups.get(row.store)
+      if (isWarehouseSource(row.source)) {
+        group.warehouse += Number(row.value ?? row.warehouse_value ?? 0)
+        group.hasWarehouseSource = true
+      } else if (isErpSource(row.source)) {
+        group.erp += Number(row.value ?? row.erp_value ?? 0)
+        group.fallbackWarehouse += Number(row.warehouse_value ?? 0)
+      } else {
+        group.warehouse += Number(row.warehouse_value ?? 0)
+        group.erp += Number(row.erp_value ?? row.value ?? 0)
+      }
     }
   }
-  return Array.from(groups.values()).sort((a, b) => String(a.store).localeCompare(String(b.store), 'zh-CN'))
+  return Array.from(groups.values())
+    .map((row) => {
+      const warehouse = row.hasWarehouseSource ? row.warehouse : row.fallbackWarehouse
+      return { store: row.store, warehouse, erp: row.erp, diff: warehouse - row.erp }
+    })
+    .sort((a, b) => String(a.store).localeCompare(String(b.store), 'zh-CN'))
+}
+
+function isWarehouseSource(source) {
+  return ['数仓', '鏁颁粨', 'warehouse', 'Warehouse'].includes(source)
+}
+
+function isErpSource(source) {
+  return ['ERP', 'erp'].includes(source)
 }
 
 async function downloadCompare() {
