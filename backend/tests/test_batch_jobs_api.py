@@ -72,3 +72,77 @@ def test_batch_run_job_completes(monkeypatch) -> None:
     assert job["completed"] == 2
     assert job["progress_percent"] == 100
     assert [run["rule_id"] for run in job["runs"]] == [1, 2]
+
+
+def test_cancel_missing_batch_job_returns_404() -> None:
+    client = TestClient(main.app)
+
+    response = client.post("/api/reconcile/batch-run/jobs/missing/cancel")
+
+    assert response.status_code == 404
+
+
+def test_cancel_completed_batch_job_keeps_completed(monkeypatch) -> None:
+    monkeypatch.setattr(main, "get_rule", _rule)
+    monkeypatch.setattr(main, "_run_rule", _run)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/reconcile/batch-run/jobs",
+        json={
+            "rule_ids": [3],
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-31",
+            "granularity": "month",
+        },
+    )
+    job_id = response.json()["job_id"]
+    for _ in range(20):
+        job = client.get(f"/api/reconcile/batch-run/jobs/{job_id}").json()
+        if job["status"] == "completed":
+            break
+        sleep(0.01)
+
+    response = client.post(f"/api/reconcile/batch-run/jobs/{job_id}/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+
+
+def test_cancel_running_batch_job_stops_before_next_rule(monkeypatch) -> None:
+    calls: list[int] = []
+
+    def slow_run(rule: Rule, start_date: date, end_date: date, granularity: str, progress_callback=None) -> ReconcileRun:
+        calls.append(rule.id)
+        for index in range(20):
+            if progress_callback:
+                progress_callback(stage="测试慢任务", detail=f"{rule.name}-{index}")
+            sleep(0.01)
+        return _run(rule, start_date, end_date, granularity, progress_callback)
+
+    monkeypatch.setattr(main, "get_rule", _rule)
+    monkeypatch.setattr(main, "_run_rule", slow_run)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/reconcile/batch-run/jobs",
+        json={
+            "rule_ids": [4, 5],
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-31",
+            "granularity": "month",
+        },
+    )
+    job_id = response.json()["job_id"]
+    sleep(0.03)
+
+    response = client.post(f"/api/reconcile/batch-run/jobs/{job_id}/cancel")
+
+    assert response.status_code == 200
+    for _ in range(40):
+        job = client.get(f"/api/reconcile/batch-run/jobs/{job_id}").json()
+        if job["status"] == "cancelled":
+            break
+        sleep(0.01)
+    assert job["status"] == "cancelled"
+    assert calls == [4]

@@ -164,7 +164,7 @@ class BatchRunResponse(BaseModel):
 
 class BatchRunJob(BaseModel):
     job_id: str
-    status: Literal["queued", "running", "completed"]
+    status: Literal["queued", "running", "cancel_requested", "cancelled", "completed"]
     total: int
     completed: int = 0
     total_steps: int = 0
@@ -181,6 +181,8 @@ class BatchRunJob(BaseModel):
     created_at: datetime
     updated_at: datetime
     finished_at: Optional[datetime] = None
+    cancel_requested_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
 
 
 class CompareExportRequest(BaseModel):

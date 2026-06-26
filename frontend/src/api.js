@@ -52,6 +52,10 @@ export function getBatchRunJob(jobId) {
   return request(`/api/reconcile/batch-run/jobs/${jobId}`)
 }
 
+export function cancelBatchRunJob(jobId) {
+  return request(`/api/reconcile/batch-run/jobs/${jobId}/cancel`, { method: 'POST' })
+}
+
 export function listRuns(params = {}) {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {

@@ -181,10 +181,13 @@
           <button :disabled="running || selectedRuleIds.length === 0">
             {{ running ? runButtonText : `开始对账（${selectedRuleIds.length}）` }}
           </button>
+          <button v-if="running" type="button" class="danger" :disabled="cancelling" @click="cancelCurrentJob">
+            {{ cancelling ? '取消中...' : '取消对账' }}
+          </button>
         </form>
         <div v-if="currentJob" class="job-progress">
           <div class="job-progress-head">
-            <strong>{{ currentJob.status === 'completed' ? '运行完成' : '后台运行中' }}</strong>
+            <strong>{{ jobStatusLabel }}</strong>
             <span>{{ currentJob.progress_percent || 0 }}%</span>
           </div>
           <progress :value="currentJob.progress_percent || 0" max="100"></progress>
@@ -380,6 +383,7 @@
 <script setup>
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
+  cancelBatchRunJob,
   createRule,
   deleteRule,
   deleteRun,
@@ -468,6 +472,7 @@ const selectedRuleIds = ref([])
 const selectedRunIds = ref([])
 const failedRuns = ref([])
 const running = ref(false)
+const cancelling = ref(false)
 const currentJob = ref(null)
 const jobPollTimer = ref(null)
 const message = ref('')
@@ -495,6 +500,14 @@ const runButtonText = computed(() => {
   if (!currentJob.value) return '运行中...'
   const percent = currentJob.value.progress_percent
   return Number.isFinite(percent) ? `运行中 ${percent}%` : '运行中...'
+})
+
+const jobStatusLabel = computed(() => {
+  if (!currentJob.value) return '后台运行中'
+  if (currentJob.value.status === 'completed') return '运行完成'
+  if (currentJob.value.status === 'cancelled') return '已取消'
+  if (currentJob.value.status === 'cancel_requested') return '取消中'
+  return '后台运行中'
 })
 
 const compareRows = computed(() => {
@@ -718,6 +731,7 @@ async function removeRule(id) {
 
 async function runBatch() {
   running.value = true
+  cancelling.value = false
   failedRuns.value = []
   currentJob.value = null
   clearJobPolling()
@@ -739,9 +753,14 @@ async function pollBatchJob(jobId) {
   try {
     const job = await getBatchRunJob(jobId)
     currentJob.value = job
-    if (job.status !== 'completed') return
+    if (!['completed', 'cancelled'].includes(job.status)) return
     clearJobPolling()
     running.value = false
+    cancelling.value = false
+    if (job.status === 'cancelled') {
+      notify('任务已取消', 'info')
+      return
+    }
     failedRuns.value = job.failed_runs || []
     notify(`运行完成：成功 ${job.runs.length} 个，失败 ${failedRuns.value.length} 个`, failedRuns.value.length ? 'error' : 'success')
     selectedRunIds.value = job.runs.map((run) => run.id)
@@ -751,7 +770,21 @@ async function pollBatchJob(jobId) {
   } catch (error) {
     clearJobPolling()
     running.value = false
+    cancelling.value = false
     notify(`进度刷新失败：${error.message}。可到结果查看页刷新历史记录。`, 'error')
+  }
+}
+
+async function cancelCurrentJob() {
+  if (!currentJob.value?.job_id) return
+  if (!window.confirm('确认取消当前对账任务？已保存的历史结果不会删除。')) return
+  cancelling.value = true
+  try {
+    currentJob.value = await cancelBatchRunJob(currentJob.value.job_id)
+    notify('已发送取消请求，正在停止后续步骤。', 'info')
+  } catch (error) {
+    cancelling.value = false
+    notify(`取消失败：${error.message}`, 'error')
   }
 }
 

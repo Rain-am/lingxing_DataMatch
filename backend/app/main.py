@@ -61,6 +61,10 @@ _batch_jobs: dict[str, BatchRunJob] = {}
 _batch_jobs_lock = Lock()
 
 
+class JobCancelled(Exception):
+    pass
+
+
 def _copy_batch_job(job: BatchRunJob) -> BatchRunJob:
     if hasattr(job, "model_copy"):
         return job.model_copy(deep=True)
@@ -77,6 +81,16 @@ def _get_batch_job(job_id: str) -> Optional[BatchRunJob]:
     with _batch_jobs_lock:
         job = _batch_jobs.get(job_id)
         return _copy_batch_job(job) if job else None
+
+
+def _is_cancel_requested(job_id: str) -> bool:
+    job = _get_batch_job(job_id)
+    return bool(job and job.status == "cancel_requested")
+
+
+def _raise_if_cancelled(job_id: str) -> None:
+    if _is_cancel_requested(job_id):
+        raise JobCancelled()
 
 
 def _apply_job_progress(
@@ -251,52 +265,71 @@ def _execute_batch_job(job_id: str, payload: BatchRunRequest) -> None:
         return
     job.status = "running"
     _save_batch_job(job)
-    for rule_id in payload.rule_ids:
-        rule = get_rule(rule_id)
-        rule_steps = _rule_progress_steps(rule, payload.start_date, payload.end_date) if rule else 1
-        rule_start_steps = job.done_steps
-        job.current_rule_id = rule_id
-        job.current_rule_name = rule.name if rule else ""
-        _apply_job_progress(job, stage="准备运行", detail=job.current_rule_name or f"规则 {rule_id}")
-        if not rule:
-            job.failed_runs.append(BatchRunFailure(rule_id=rule_id, rule_name="", error_message="rule not found"))
-            _apply_job_progress(job, stage="规则失败", detail="rule not found", advance=1)
-            job.completed += 1
-            _save_batch_job(job)
-            continue
-        try:
-            def progress_callback(**kwargs) -> None:
-                _apply_job_progress(job, **kwargs)
+    try:
+        for rule_id in payload.rule_ids:
+            _raise_if_cancelled(job_id)
+            rule = get_rule(rule_id)
+            rule_steps = _rule_progress_steps(rule, payload.start_date, payload.end_date) if rule else 1
+            rule_start_steps = job.done_steps
+            job.current_rule_id = rule_id
+            job.current_rule_name = rule.name if rule else ""
+            _apply_job_progress(job, stage="准备运行", detail=job.current_rule_name or f"规则 {rule_id}")
+            if not rule:
+                job.failed_runs.append(BatchRunFailure(rule_id=rule_id, rule_name="", error_message="rule not found"))
+                _apply_job_progress(job, stage="规则失败", detail="rule not found", advance=1)
+                job.completed += 1
+                _save_batch_job(job)
+                continue
+            try:
+                def progress_callback(**kwargs) -> None:
+                    _raise_if_cancelled(job_id)
+                    _apply_job_progress(job, **kwargs)
+                    _raise_if_cancelled(job_id)
 
-            job.runs.append(
-                _run_rule(
-                    rule,
-                    payload.start_date,
-                    payload.end_date,
-                    payload.granularity,
-                    progress_callback=progress_callback,
+                _raise_if_cancelled(job_id)
+                job.runs.append(
+                    _run_rule(
+                        rule,
+                        payload.start_date,
+                        payload.end_date,
+                        payload.granularity,
+                        progress_callback=progress_callback,
+                    )
                 )
-            )
-        except Exception as exc:
-            failed_run = save_run(
-                rule_id=rule.id,
-                rule_name=rule.name,
-                start_date=payload.start_date,
-                end_date=payload.end_date,
-                granularity=payload.granularity,
-                rows=[],
-                status="failed",
-                error_message=str(exc),
-            )
-            job.failed_runs.append(
-                BatchRunFailure(rule_id=rule.id, rule_name=rule.name, run=failed_run, error_message=str(exc))
-            )
-        finally:
-            if job.done_steps < rule_start_steps + rule_steps:
-                job.done_steps = min(job.total_steps, rule_start_steps + rule_steps)
-                job.progress_percent = min(100, int(job.done_steps * 100 / job.total_steps)) if job.total_steps else 0
-            job.completed += 1
-            _save_batch_job(job)
+            except JobCancelled:
+                raise
+            except Exception as exc:
+                failed_run = save_run(
+                    rule_id=rule.id,
+                    rule_name=rule.name,
+                    start_date=payload.start_date,
+                    end_date=payload.end_date,
+                    granularity=payload.granularity,
+                    rows=[],
+                    status="failed",
+                    error_message=str(exc),
+                )
+                job.failed_runs.append(
+                    BatchRunFailure(rule_id=rule.id, rule_name=rule.name, run=failed_run, error_message=str(exc))
+                )
+            finally:
+                if job.done_steps < rule_start_steps + rule_steps:
+                    job.done_steps = min(job.total_steps, rule_start_steps + rule_steps)
+                    job.progress_percent = min(100, int(job.done_steps * 100 / job.total_steps)) if job.total_steps else 0
+                job.completed += 1
+                _save_batch_job(job)
+    except JobCancelled:
+        job.status = "cancelled"
+        job.stage = "已取消"
+        job.detail = "用户取消了当前对账任务"
+        job.current_rule_id = None
+        job.current_rule_name = ""
+        job.current_period = ""
+        job.current_page = None
+        job.cancelled_at = datetime.now()
+        job.finished_at = job.cancelled_at
+        _save_batch_job(job)
+        return
     job.status = "completed"
     job.current_rule_id = None
     job.current_rule_name = ""
@@ -336,6 +369,23 @@ def api_get_batch_run_job(job_id: str) -> BatchRunJob:
     if not job:
         raise HTTPException(status_code=404, detail="batch job not found")
     return job
+
+
+@app.post("/api/reconcile/batch-run/jobs/{job_id}/cancel", response_model=BatchRunJob)
+def api_cancel_batch_run_job(job_id: str) -> BatchRunJob:
+    with _batch_jobs_lock:
+        job = _batch_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="batch job not found")
+        if job.status in {"completed", "cancelled"}:
+            return _copy_batch_job(job)
+        job.status = "cancel_requested"
+        job.stage = "取消中"
+        job.detail = "收到取消请求，正在停止后续步骤"
+        job.cancel_requested_at = datetime.now()
+        job.updated_at = job.cancel_requested_at
+        _batch_jobs[job.job_id] = _copy_batch_job(job)
+        return _copy_batch_job(job)
 
 
 @app.get("/api/reconcile/runs", response_model=list[RunListItem])
