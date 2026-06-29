@@ -15,6 +15,9 @@ class Settings:
     mysql_user: str = "root"
     mysql_password: str = ""
     mysql_database: str = "lingxing_dw"
+    mysql_connect_timeout: int = 20
+    mysql_read_timeout: int = 300
+    mysql_write_timeout: int = 300
 
     ssh_tunnel_enabled: bool = False
     ssh_host: str = ""
@@ -114,6 +117,9 @@ def get_settings() -> Settings:
         mysql_user=_get(values, "MYSQL_USER", "root"),
         mysql_password=_get(values, "MYSQL_PASSWORD", ""),
         mysql_database=_get(values, "MYSQL_DATABASE", "lingxing_dw"),
+        mysql_connect_timeout=_get_int(values, "MYSQL_CONNECT_TIMEOUT", 20),
+        mysql_read_timeout=_get_int(values, "MYSQL_READ_TIMEOUT", 300),
+        mysql_write_timeout=_get_int(values, "MYSQL_WRITE_TIMEOUT", 300),
         ssh_tunnel_enabled=_get_bool(values, "SSH_TUNNEL_ENABLED", False),
         ssh_host=_get(values, "SSH_HOST", ""),
         ssh_port=_get_int(values, "SSH_PORT", 22),

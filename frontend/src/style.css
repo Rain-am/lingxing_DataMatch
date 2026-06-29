@@ -421,7 +421,55 @@ textarea {
 
 .run-form.batch {
   padding: 0;
-  grid-template-columns: repeat(3, minmax(160px, 1fr)) auto;
+  grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(150px, 1fr)) minmax(130px, 0.8fr) auto;
+}
+
+.date-preset-field {
+  min-width: 0;
+}
+
+.date-presets {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.date-presets button {
+  min-height: 36px;
+  border: 1px solid #dbe3ea;
+  padding: 0 10px;
+  color: #526273;
+  background: #f7f9fb;
+}
+
+.date-presets button.active {
+  border-color: #1f5fbf;
+  color: #fff;
+  background: #1f5fbf;
+}
+
+.selected-rule-bar {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: #526273;
+}
+
+.selected-rule-bar strong {
+  color: #253445;
+}
+
+.compact-danger {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.selected-rule-bar + .check-list {
+  margin-top: 8px;
 }
 
 .check-list,

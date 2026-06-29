@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Callable, Iterator, Optional
 
 import pymysql
+from pymysql.err import OperationalError
 from pymysql.cursors import DictCursor
 
 from app.config import get_settings
@@ -24,6 +26,23 @@ def _period_sql(field: str, granularity: Granularity) -> str:
 
 def _map_store(raw_store: str, mapping: dict[str, str]) -> str:
     return mapping.get(raw_store, raw_store)
+
+
+def _month_windows(start_date: str, end_date: str) -> list[tuple[str, str, str]]:
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    if end < start:
+        return []
+
+    windows: list[tuple[str, str, str]] = []
+    cursor = start.replace(day=1)
+    while cursor <= end:
+        next_month = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+        window_start = max(start, cursor)
+        window_end = min(end, next_month - timedelta(days=1))
+        windows.append((cursor.strftime("%Y-%m"), window_start.isoformat(), window_end.isoformat()))
+        cursor = next_month
+    return windows
 
 
 @contextmanager
@@ -57,9 +76,9 @@ def _warehouse_connection() -> Iterator[pymysql.connections.Connection]:
         database=settings.mysql_database,
         charset="utf8mb4",
         cursorclass=DictCursor,
-        connect_timeout=20,
-        read_timeout=60,
-        write_timeout=60,
+        connect_timeout=settings.mysql_connect_timeout,
+        read_timeout=settings.mysql_read_timeout,
+        write_timeout=settings.mysql_write_timeout,
     )
     try:
         yield connection
@@ -100,26 +119,55 @@ def fetch_warehouse_source_values(
         ORDER BY period, store
     """
 
-    if progress_callback:
-        progress_callback(stage="数仓取数", detail=f"{source.name} 查询汇总数据")
-
-    with _warehouse_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(sql, (start_date, end_date))
-            rows: list[dict[str, Any]] = cursor.fetchall()
-        store_mapping = fetch_store_mapping_for_source(source, connection)
-
-    if progress_callback:
-        progress_callback(stage="数仓取数", detail=f"{source.name} 已取得 {len(rows)} 行", advance=1)
+    store_mapping = fetch_store_mapping(source.store_mapping) if source.store_mapping.enabled else {}
 
     result: dict[tuple[str, str, str, str], Decimal] = {}
-    for row in rows:
-        period = str(row["period"])
-        store = _map_store(str(row["store"] or ""), store_mapping)
-        for index, metric in enumerate(source.metrics):
-            value = row.get(f"metric_{index}") or 0
-            result[(period, store, metric.name, source.name)] = Decimal(str(value))
+    for period_label, window_start, window_end in _month_windows(start_date, end_date):
+        if progress_callback:
+            progress_callback(stage="数仓取数", detail=f"{source.name} {period_label} 查询汇总数据", current_period=period_label)
+
+        rows = _fetch_warehouse_rows(sql, (window_start, window_end), source.name, period_label)
+
+        if progress_callback:
+            progress_callback(
+                stage="数仓取数",
+                detail=f"{source.name} {period_label} 已取得 {len(rows)} 行",
+                current_period=period_label,
+                advance=1,
+            )
+
+        for row in rows:
+            period = str(row["period"])
+            store = _map_store(str(row["store"] or ""), store_mapping)
+            for index, metric in enumerate(source.metrics):
+                value = row.get(f"metric_{index}") or 0
+                result[(period, store, metric.name, source.name)] = Decimal(str(value))
     return result
+
+
+def _fetch_warehouse_rows(
+    sql: str,
+    params: tuple[str, str],
+    source_name: str,
+    period_label: str,
+) -> list[dict[str, Any]]:
+    last_error: OperationalError | None = None
+    for attempt in range(2):
+        try:
+            with _warehouse_connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(sql, params)
+                    return list(cursor.fetchall())
+        except OperationalError as exc:
+            last_error = exc
+            code = exc.args[0] if exc.args else None
+            if code in {2006, 2013} and attempt == 0:
+                continue
+            break
+
+    if last_error:
+        raise RuntimeError(f"数仓查询失败：{source_name} {period_label}，{last_error}") from last_error
+    return []
 
 
 def fetch_store_mapping(mapping: StoreMapping) -> dict[str, str]:

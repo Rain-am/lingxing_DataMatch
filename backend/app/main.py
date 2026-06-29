@@ -175,7 +175,9 @@ def _rule_progress_steps(rule: Rule, start_date: date, end_date: date) -> int:
             sources.append(type("SourceLike", (), {"type": "erp", "period_mode": "response_field"})())
     source_steps = 0
     for source in sources:
-        if source.type == "erp" and source.period_mode == "request_month":
+        if source.type == "warehouse":
+            source_steps += _month_step_count(start_date, end_date)
+        elif source.type == "erp" and source.period_mode == "request_month":
             source_steps += _month_step_count(start_date, end_date)
         else:
             source_steps += 1

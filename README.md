@@ -17,6 +17,19 @@ Local and server-deployable reconciliation tool for comparing Lingxing data ware
 - `frontend/`: Vue UI.
 - `deploy/`: Linux deployment templates for systemd.
 - `scripts/`: Windows local helper scripts.
+- `docs/`: Project control docs, module docs, changelog, and open issue register.
+
+## Project Control Docs
+
+Before making changes, agents and maintainers should read:
+
+1. `AGENTS.md`
+2. `PROJECT_CONTEXT.md`
+3. `docs/CODEX_CHANGELOG.md`
+4. `docs/modules/README.md`
+5. `docs/open-issues.md`
+
+These files are the project fact base. Keep them aligned with code and git state.
 
 ## Local Run On Windows
 
@@ -26,6 +39,10 @@ Local and server-deployable reconciliation tool for comparing Lingxing data ware
 4. Open `http://127.0.0.1:8000/`.
 
 Keep the command window open while using the app.
+
+The root `.bat` serves the committed `frontend/dist` files. For developer
+workflows that rebuild the frontend before starting the backend, see
+`docs/modules/deployment-operations.md`.
 
 ## Linux Server Deployment
 

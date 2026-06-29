@@ -163,13 +163,28 @@
           </div>
         </div>
         <form class="run-form batch" @submit.prevent="runBatch">
+          <label class="date-preset-field">
+            日期范围
+            <span class="date-presets">
+              <button
+                v-for="option in datePresetOptions"
+                :key="option.value"
+                type="button"
+                class="secondary"
+                :class="{ active: datePreset === option.value }"
+                @click="applyDatePreset(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </span>
+          </label>
           <label>
             开始日期
-            <input v-model="runForm.start_date" type="date" required />
+            <input v-model="runForm.start_date" type="date" required @input="markCustomDateRange" />
           </label>
           <label>
             结束日期
-            <input v-model="runForm.end_date" type="date" required />
+            <input v-model="runForm.end_date" type="date" required @input="markCustomDateRange" />
           </label>
           <label>
             汇总粒度
@@ -180,9 +195,6 @@
           </label>
           <button :disabled="running || selectedRuleIds.length === 0">
             {{ running ? runButtonText : `开始对账（${selectedRuleIds.length}）` }}
-          </button>
-          <button v-if="running" type="button" class="danger" :disabled="cancelling" @click="cancelCurrentJob">
-            {{ cancelling ? '取消中...' : '取消对账' }}
           </button>
         </form>
         <div v-if="currentJob" class="job-progress">
@@ -210,6 +222,12 @@
             <p>{{ failure.error_message }}</p>
             <button v-if="failure.run" type="button" class="secondary" @click="selectRun(failure.run)">查看该失败记录</button>
           </div>
+        </div>
+        <div class="selected-rule-bar">
+          <strong>已勾选规则：{{ selectedRuleIds.length }}</strong>
+          <button v-if="running" type="button" class="danger compact-danger" :disabled="cancelling" @click="cancelCurrentJob">
+            {{ cancelling ? '取消中...' : '取消对账' }}
+          </button>
         </div>
         <div class="check-list">
           <label v-for="rule in rules" :key="rule.id" class="check-item">
@@ -484,6 +502,13 @@ const openFilterMenu = ref('')
 const erpRequestConfigText = ref(JSON.stringify(defaultRequestConfig(), null, 2))
 const ruleForm = reactive(emptyRule())
 const runForm = reactive({ start_date: '', end_date: '', granularity: 'month' })
+const datePreset = ref('custom')
+const datePresetOptions = [
+  { value: 'current_month', label: '本月' },
+  { value: 'previous_month', label: '上月' },
+  { value: 'recent_three_months', label: '近3个月' },
+  { value: 'custom', label: '自定义' },
+]
 const runFilters = reactive({ rule_id: '', status: '' })
 const compareFilters = reactive({ periods: [], metrics: [], rule: '' })
 
@@ -584,12 +609,59 @@ watch(() => ruleForm.erp_period_mode, (mode) => {
   if (mode === 'response_field' && !ruleForm.erp_date_field) ruleForm.erp_date_field = 'date'
 })
 
+watch(tab, (nextTab) => {
+  if (nextTab === 'run') ensureRunDateDefaults()
+}, { immediate: true })
+
 function notify(text, type = 'info') {
   message.value = text
   messageType.value = type
   window.setTimeout(() => {
     if (message.value === text) message.value = ''
   }, 5000)
+}
+
+function ensureRunDateDefaults() {
+  if (!runForm.start_date || !runForm.end_date) applyDatePreset('current_month')
+}
+
+function applyDatePreset(preset) {
+  datePreset.value = preset
+  if (preset === 'custom') return
+  const range = dateRangeForPreset(preset)
+  runForm.start_date = formatDateInput(range.start)
+  runForm.end_date = formatDateInput(range.end)
+}
+
+function markCustomDateRange() {
+  datePreset.value = 'custom'
+}
+
+function dateRangeForPreset(preset) {
+  if (preset === 'previous_month') return monthRange(-1)
+  if (preset === 'recent_three_months') {
+    const now = new Date()
+    return {
+      start: new Date(now.getFullYear(), now.getMonth() - 2, 1),
+      end: new Date(now.getFullYear(), now.getMonth() + 1, 0),
+    }
+  }
+  return monthRange(0)
+}
+
+function monthRange(offset) {
+  const now = new Date()
+  return {
+    start: new Date(now.getFullYear(), now.getMonth() + offset, 1),
+    end: new Date(now.getFullYear(), now.getMonth() + offset + 1, 0),
+  }
+}
+
+function formatDateInput(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 async function refreshRules() {
