@@ -481,8 +481,8 @@ class LingxingApiClient:
                     current_page=page_label,
                 )
             payload = dict(extra_params)
-            payload[start_param] = start_date if request_period else _date_for_request(start_date, granularity)
-            payload[end_param] = end_date if request_period else _date_for_request(end_date, granularity)
+            payload[start_param] = _date_for_request(start_date, granularity)
+            payload[end_param] = _date_for_request(end_date, granularity)
             if pagination_mode == "offset":
                 payload[offset_param or "offset"] = offset
                 payload[length_param or "length"] = effective_page_size

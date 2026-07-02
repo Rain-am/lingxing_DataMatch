@@ -8,6 +8,15 @@ Before 2026-06-26 this repository did not contain a Codex changelog, so the
 baseline entries below summarize the current code shape from repository files
 rather than a historical commit-by-commit record.
 
+## 2026-07-02 - Fixed Lingxing request-month date format
+
+- Changed Lingxing month-granularity request params to send `YYYY-MM` even when
+  the ERP source uses `request_month` month windows.
+- Kept internal reconcile periods as `YYYY-MM-01` for existing summary and
+  comparison compatibility.
+- Added a regression test for request-month OrderProfit payload dates.
+- Verification: targeted Lingxing API pytest file run for this change.
+
 ## 2026-06-29 - Stabilized warehouse month-range queries
 
 - Split warehouse aggregate queries into calendar-month windows so long date

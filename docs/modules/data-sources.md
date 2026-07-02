@@ -41,6 +41,8 @@ The Lingxing adapter:
 - Forces `currencyCode` to `USD` in request params.
 - Supports nested field extraction such as `data.field` and `data>>field`.
 - Supports `request_month` period mode for APIs that do not return a date field.
+  Month-granularity Lingxing request date params are sent as `YYYY-MM`, while
+  internal reconcile periods remain `YYYY-MM-01`.
 
 ## Store Mapping
 

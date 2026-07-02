@@ -219,6 +219,26 @@ def test_order_profit_defaults_to_offset_pagination(monkeypatch) -> None:
     assert "pageSize" not in captured_payloads[0]
 
 
+def test_request_month_window_uses_month_date_params(monkeypatch) -> None:
+    captured_payloads = []
+
+    client = LingxingApiClient()
+    client._post_json = lambda url, payload: captured_payloads.append(payload) or {"code": "0", "data": []}
+
+    client._fetch_window_records(
+        "https://openapi.lingxing.com/basicOpen/finance/mreport/OrderProfit",
+        {"extraParams": {}},
+        "2026-06-01",
+        "2026-06-30",
+        "month",
+        200,
+        request_period="2026-06-01",
+    )
+
+    assert captured_payloads[0]["startDate"] == "2026-06"
+    assert captured_payloads[0]["endDate"] == "2026-06"
+
+
 def test_token_error_does_not_expose_secret(monkeypatch) -> None:
     def fake_urlopen(request, timeout):
         return FakeResponse(

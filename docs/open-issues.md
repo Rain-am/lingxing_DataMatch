@@ -53,6 +53,9 @@ open item.
 - Next action: Add sanitized examples to a new docs file or module doc after
   confirming field names against real API responses.
 
+- Progress: 2026-07-02 confirmed request-month OrderProfit date params require
+  `YYYY-MM`; adapter now formats month-granularity requests that way.
+
 ### OI-005 - Add user-facing error and empty-state review
 
 - Status: open
